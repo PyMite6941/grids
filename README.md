@@ -3,8 +3,10 @@
 A spreadsheet with an AI built in. Bring your own key or subscription, and type Python
 into cells next to normal formulas.
 
-- **Formulas**: `=SUM(B2:B9)`, `IF`, `VLOOKUP`, `SORT`, `SEQUENCE`, with spilling
-  arrays. The function list is in [shared/FORMULAS.md](shared/FORMULAS.md).
+- **Formulas**: `=SUM(B2:B9)`, `IF`, `IFERROR`, `ROUND`, text functions, and `SORT` /
+  `SEQUENCE` / `TRANSPOSE` with spilling arrays. That's 26 functions so far; there is no
+  `VLOOKUP`, `SUMIF` or dates yet, so use a Python cell for those. The full list is in
+  [shared/FORMULAS.md](shared/FORMULAS.md).
 - **Python cells**: start a cell with `=py `, e.g. `=py sum(vals('B1:B9'))`. A cell can
   hold a whole script, and its last value can be a number, a list or a table. The result
   spills like a formula. Formulas can read Python results and Python
@@ -35,11 +37,23 @@ cd web && npm start
 cd desktop && ./build.sh --run
 ```
 
-Connect an AI from the app (**AI → ⚙ / Keys**), or copy `.env.example` to `.env`.
+To connect an AI, open the AI panel and click **⚙** (web) or **Keys** (desktop). Or copy
+`.env.example` to `.env` and fill it in.
+
+The web server binds to `127.0.0.1` by default. Subscriptions and key editing only work
+while it does: anyone who could reach a public server could otherwise spend your plan or
+rewrite your keys (see [shared/KEYS.md](shared/KEYS.md)).
+
+## Status
+
+This is an early v0:
+- Only one sheet per workbook is used.
+- There are no charts and no real-time collaboration yet.
+- The Codex (ChatGPT) subscription path has not been tested against the real CLI.
 
 ## Test
 
 ```bash
-cd web && npm test                        # engine, server, key ring, guards
+cd web && npm test                        # formula engine, AI module, key ring, local-only guards
 cd desktop && ./build.sh --smoke          # formula fixtures + desktop smoke (needs Python)
 ```

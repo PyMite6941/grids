@@ -1,0 +1,76 @@
+{
+  "about": "Shared engine contract. Each case: cell inputs (+ optional injected Python results) -> expected values. Errors are {\"error\": code}; null = empty. Numbers compare with 1e-9 tolerance.",
+  "cases": [
+    { "name": "number literals", "cells": { "A1": "42", "A2": "-1.5", "A3": "1e3", "A4": " 7 ", "A5": "50%", "A6": ".5" },
+      "expect": { "A1": 42, "A2": -1.5, "A3": 1000, "A4": 7, "A5": 0.5, "A6": 0.5 } },
+    { "name": "text and boolean literals", "cells": { "A1": "hello", "A2": "TRUE", "A3": "false", "A4": "'123", "A5": "1,000", "A6": "" },
+      "expect": { "A1": "hello", "A2": true, "A3": false, "A4": "123", "A5": "1,000", "A6": null } },
+
+    { "name": "precedence", "cells": { "A1": "=1+2*3", "A2": "=(1+2)*3", "A3": "=2^3^2", "A4": "=-2^2", "A5": "=10/4", "A6": "=50%", "A7": "=2*-3", "A8": "=1+2&3" },
+      "expect": { "A1": 7, "A2": 9, "A3": 64, "A4": 4, "A5": 2.5, "A6": 0.5, "A7": -6, "A8": "33" } },
+    { "name": "division by zero", "cells": { "A1": "=1/0", "A2": "=A1+1" },
+      "expect": { "A1": { "error": "#DIV/0!" }, "A2": { "error": "#DIV/0!" } } },
+    { "name": "concatenation", "cells": { "A1": "=\"a\"&\"b\"", "A2": "=1&2", "A3": "=\"x\"&TRUE", "A4": "=\"say \"\"hi\"\"\"", "A5": "=0.5&\"\"", "A6": "=Z99&\"!\"" },
+      "expect": { "A1": "ab", "A2": "12", "A3": "xTRUE", "A4": "say \"hi\"", "A5": "0.5", "A6": "!" } },
+
+    { "name": "references", "cells": { "A1": "5", "A2": "=A1*2", "A3": "=$A$1+1", "A4": "=Z9+1", "A5": "=a1+a2" },
+      "expect": { "A2": 10, "A3": 6, "A4": 1, "A5": 15 } },
+    { "name": "text coercion in maths", "cells": { "A1": "abc", "A2": "=A1+1", "A3": "'5", "A4": "=A3+1", "A5": "=TRUE+1" },
+      "expect": { "A2": { "error": "#VALUE!" }, "A4": 6, "A5": 2 } },
+    { "name": "comparison", "cells": { "A1": "=1<2", "A2": "=\"a\"=\"A\"", "A3": "=1<>1", "A4": "=\"b\">\"A\"", "A5": "=1<\"a\"", "A6": "=Z1=0", "A7": "=Z1=\"\"", "A8": "=2>=2" },
+      "expect": { "A1": true, "A2": true, "A3": false, "A4": true, "A5": true, "A6": true, "A7": true, "A8": true } },
+
+    { "name": "aggregates skip text in ranges", "cells": { "A1": "1", "A2": "two", "A3": "3", "A4": "TRUE", "B1": "=SUM(A1:A5)", "B2": "=AVERAGE(A1:A4)", "B3": "=MIN(A1:A4)", "B4": "=MAX(A1:A4)", "B5": "=COUNT(A1:A5)", "B6": "=COUNTA(A1:A5)" },
+      "expect": { "B1": 4, "B2": 2, "B3": 1, "B4": 3, "B5": 2, "B6": 4 } },
+    { "name": "aggregates coerce literals", "cells": { "A1": "=SUM(\"2\",TRUE,3)", "A2": "=SUM(\"x\")", "A3": "=AVERAGE(Z1:Z3)", "A4": "=MAX(Z1:Z3)", "A5": "=sum(1,2)" },
+      "expect": { "A1": 6, "A2": { "error": "#VALUE!" }, "A3": { "error": "#DIV/0!" }, "A4": 0, "A5": 3 } },
+    { "name": "errors in ranges propagate", "cells": { "A1": "1", "A2": "=1/0", "A3": "=SUM(A1:A2)", "A4": "=COUNTA(A1:A2)" },
+      "expect": { "A3": { "error": "#DIV/0!" }, "A4": 2 } },
+
+    { "name": "logic", "cells": { "A1": "=IF(1>0,\"yes\",\"no\")", "A2": "=IF(FALSE,1)", "A3": "=IFERROR(1/0,\"x\")", "A4": "=IFERROR(5,\"x\")", "A5": "=AND(TRUE,1)", "A6": "=OR(FALSE,0)", "A7": "=NOT(0)", "A8": "=IF(\"maybe\",1,2)", "A9": "=IF(TRUE,1/0,2)" },
+      "expect": { "A1": "yes", "A2": false, "A3": "x", "A4": 5, "A5": true, "A6": false, "A7": true, "A8": { "error": "#VALUE!" }, "A9": { "error": "#DIV/0!" } } },
+
+    { "name": "maths functions", "cells": { "A1": "=ROUND(2.345,2)", "A2": "=ROUND(-2.5)", "A3": "=ROUND(1234.5,-2)", "A4": "=ABS(-3)", "A5": "=SQRT(16)", "A6": "=SQRT(-1)", "A7": "=POWER(2,10)", "A8": "=MOD(7,3)", "A9": "=MOD(-7,3)", "A10": "=MOD(1,0)", "A11": "=ROUND(0.125,2)" },
+      "expect": { "A1": 2.35, "A2": -3, "A3": 1200, "A4": 3, "A5": 4, "A6": { "error": "#NUM!" }, "A7": 1024, "A8": 1, "A9": 2, "A10": { "error": "#DIV/0!" }, "A11": 0.13 } },
+
+    { "name": "text functions", "cells": { "A1": "World", "A2": "=CONCAT(\"Hello \",A1,\"!\")", "A3": "=LEN(A1)", "A4": "=UPPER(A1)", "A5": "=LOWER(A1)", "A6": "=TRIM(\"  a   b  \")", "A7": "=LEFT(A1,3)", "A8": "=RIGHT(A1)", "A9": "=LEFT(A1,-1)", "B1": "x", "B2": "y", "A10": "=CONCAT(B1:B2,1)" },
+      "expect": { "A2": "Hello World!", "A3": 5, "A4": "WORLD", "A5": "world", "A6": "a b", "A7": "Wor", "A8": "d", "A9": { "error": "#VALUE!" }, "A10": "xy1" } },
+
+    { "name": "bad formulas", "cells": { "A1": "=1+", "A2": "=FOO(1)", "A3": "=SUM(1", "A4": "=ABS(1,2)", "A5": "=\"open", "A6": "=" },
+      "expect": { "A1": { "error": "#ERROR!" }, "A2": { "error": "#NAME?" }, "A3": { "error": "#ERROR!" }, "A4": { "error": "#VALUE!" }, "A5": { "error": "#ERROR!" }, "A6": { "error": "#ERROR!" } } },
+    { "name": "circular references", "cells": { "A1": "=A2", "A2": "=A1", "A3": "=A3+1" },
+      "expect": { "A1": { "error": "#CIRC!" }, "A2": { "error": "#CIRC!" }, "A3": { "error": "#CIRC!" } } },
+    { "name": "array in scalar spot", "cells": { "A1": "1", "A2": "2", "B1": "=A1:A2+1" },
+      "expect": { "B1": { "error": "#VALUE!" } } },
+
+    { "name": "SEQUENCE spills down", "cells": { "A1": "=SEQUENCE(3)" },
+      "expect": { "A1": 1, "A2": 2, "A3": 3, "A4": null } },
+    { "name": "SEQUENCE 2-D with start and step", "cells": { "B2": "=SEQUENCE(2,3,10,5)" },
+      "expect": { "B2": 10, "C2": 15, "D2": 20, "B3": 25, "C3": 30, "D3": 35 } },
+    { "name": "blocked spill", "cells": { "A1": "=SEQUENCE(3)", "A3": "x" },
+      "expect": { "A1": { "error": "#SPILL!" }, "A2": null, "A3": "x" } },
+    { "name": "references into a spill", "cells": { "A1": "=SEQUENCE(4)", "B1": "=SUM(A1:A4)", "B2": "=A3*10" },
+      "expect": { "B1": 10, "B2": 30 } },
+    { "name": "two spills colliding", "cells": { "A1": "=SEQUENCE(1,3)", "B1": "x", "C2": "=SEQUENCE(2)", "C1": "=SEQUENCE(1,1)" },
+      "expect": { "A1": { "error": "#SPILL!" }, "C1": 1, "C2": 1, "C3": 2 } },
+    { "name": "range formula spills", "cells": { "A1": "a", "A2": "b", "C1": "=A1:A2" },
+      "expect": { "C1": "a", "C2": "b" } },
+    { "name": "TRANSPOSE", "cells": { "A1": "1", "B1": "2", "C1": "3", "A3": "=TRANSPOSE(A1:C1)" },
+      "expect": { "A3": 1, "A4": 2, "A5": 3, "B3": null } },
+    { "name": "SORT", "cells": { "A1": "3", "A2": "1", "A3": "2", "B1": "=SORT(A1:A3)", "C1": "=SORT(A1:A3,1,FALSE)" },
+      "expect": { "B1": 1, "B2": 2, "B3": 3, "C1": 3, "C2": 2, "C3": 1 } },
+    { "name": "SORT by second column", "cells": { "A1": "a", "B1": "2", "A2": "b", "B2": "1", "D1": "=SORT(A1:B2,2)", "G1": "=SORT(A1:B2,3)" },
+      "expect": { "D1": "b", "E1": 1, "D2": "a", "E2": 2, "G1": { "error": "#VALUE!" } } },
+
+    { "name": "python cell not run yet", "cells": { "A1": "=py 1+1", "A2": "=A1*2" },
+      "expect": { "A1": { "error": "#BUSY!" }, "A2": { "error": "#BUSY!" } } },
+    { "name": "python result feeds formulas", "cells": { "A1": "=py 1+1", "A2": "=A1*2" }, "python": { "A1": 2 },
+      "expect": { "A1": 2, "A2": 4 } },
+    { "name": "python table spills", "cells": { "A1": "=PY\nrows", "C1": "=SUM(A1:B2)" }, "python": { "A1": [[1, 2], [3, 4]] },
+      "expect": { "A1": 1, "B1": 2, "A2": 3, "B2": 4, "C1": 10 } },
+    { "name": "python error", "cells": { "A1": "=py boom()", "A2": "=A1" }, "python": { "A1": { "error": "#PYTHON!", "message": "NameError" } },
+      "expect": { "A1": { "error": "#PYTHON!" }, "A2": { "error": "#PYTHON!" } } },
+    { "name": "not python", "cells": { "A1": "=pyx", "A2": "=python" },
+      "expect": { "A1": { "error": "#ERROR!" }, "A2": { "error": "#ERROR!" } } }
+  ]
+}

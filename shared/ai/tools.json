@@ -1,0 +1,88 @@
+[
+  {
+    "type": "function",
+    "function": {
+      "name": "set_cells",
+      "description": "Write raw inputs into cells, exactly as a user would type them. Use formulas (\"=SUM(B2:B9)\") or Python cells (\"=py ...\") instead of hard-coding computed numbers. An empty string clears a cell.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "cells": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "ref": { "type": "string", "description": "A1-style cell reference, e.g. \"B3\"" },
+                "input": { "type": "string", "description": "Raw cell input: text, number, \"=FORMULA(...)\" or \"=py <python>\"" }
+              },
+              "required": ["ref", "input"]
+            }
+          }
+        },
+        "required": ["cells"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "clear_range",
+      "description": "Clear the inputs (and formatting if requested) of every cell in a range.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "range": { "type": "string", "description": "e.g. \"A1:D20\"" },
+          "formats": { "type": "boolean", "description": "Also clear formatting. Default false." }
+        },
+        "required": ["range"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "format_range",
+      "description": "Apply formatting to every cell in a range. Omitted properties are left unchanged.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "range": { "type": "string" },
+          "bold": { "type": "boolean" },
+          "italic": { "type": "boolean" },
+          "align": { "type": "string", "enum": ["left", "center", "right"] },
+          "numFmt": { "type": "string", "enum": ["general", "0", "0.00", "#,##0", "#,##0.00", "0%", "0.00%", "$#,##0.00"] },
+          "bg": { "type": "string", "description": "Fill colour #rrggbb" },
+          "color": { "type": "string", "description": "Text colour #rrggbb" }
+        },
+        "required": ["range"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "set_column_width",
+      "description": "Set a column's width in pixels (40-600).",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "column": { "type": "string", "description": "Column letter, e.g. \"B\"" },
+          "width": { "type": "integer" }
+        },
+        "required": ["column", "width"]
+      }
+    }
+  },
+  {
+    "type": "function",
+    "function": {
+      "name": "set_title",
+      "description": "Rename the workbook.",
+      "parameters": {
+        "type": "object",
+        "properties": { "title": { "type": "string" } },
+        "required": ["title"]
+      }
+    }
+  }
+]

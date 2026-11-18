@@ -1,0 +1,10 @@
+# AI keys and their usage counts — local only
+.env
+.env.*
+!.env.example
+.grids-usage.json
+*.tmp
+
+# build output
+desktop/build/
+node_modules/

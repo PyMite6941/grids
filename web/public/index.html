@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grids</title>
+  <meta name="description" content="A spreadsheet with formulas, Python cells and your own AI built in.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body class="ai-open">
+  <header class="topbar">
+    <div class="brand" aria-label="Grids"><img src="/favicon.svg" alt="" width="22" height="22"> Grids</div>
+    <input id="title" class="title" value="Untitled" aria-label="Workbook title" maxlength="200" spellcheck="false">
+    <nav class="file-menu" aria-label="File">
+      <button class="btn ghost" id="btn-new" type="button">New</button>
+      <button class="btn ghost" id="btn-open" type="button">Open</button>
+      <button class="btn ghost" id="btn-save" type="button" title="Save as .grid (Ctrl+S)">Save</button>
+      <button class="btn ghost" id="btn-csv" type="button">Export CSV</button>
+      <input id="file-input" type="file" accept=".grid,.json,.csv" hidden>
+    </nav>
+    <span class="spacer"></span>
+    <span id="py-status" class="py-status" data-status="off"></span>
+    <button class="btn" id="btn-toggle-ai" type="button" aria-controls="ai-panel">AI</button>
+  </header>
+
+  <div class="toolbar" role="toolbar" aria-label="Formatting">
+    <button class="icon-btn" id="btn-undo" type="button" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+    <button class="icon-btn" id="btn-redo" type="button" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
+    <span class="sep"></span>
+    <button class="icon-btn" id="btn-bold" type="button" title="Bold (Ctrl+B)" aria-label="Bold" aria-pressed="false"><b>B</b></button>
+    <button class="icon-btn" id="btn-italic" type="button" title="Italic (Ctrl+I)" aria-label="Italic" aria-pressed="false"><i>I</i></button>
+    <span class="sep"></span>
+    <button class="icon-btn" id="btn-align-left" type="button" title="Align left" aria-label="Align left" aria-pressed="false">⇤</button>
+    <button class="icon-btn" id="btn-align-center" type="button" title="Align center" aria-label="Align center" aria-pressed="false">↔</button>
+    <button class="icon-btn" id="btn-align-right" type="button" title="Align right" aria-label="Align right" aria-pressed="false">⇥</button>
+    <span class="sep"></span>
+    <select id="num-format" aria-label="Number format" title="Number format"></select>
+    <label class="color-pick" title="Fill colour"><span aria-hidden="true">▧</span><input type="color" id="fill-color" value="#fff2cc" aria-label="Fill colour"></label>
+    <label class="color-pick" title="Text colour"><span aria-hidden="true">A</span><input type="color" id="text-color" value="#c0392b" aria-label="Text colour"></label>
+    <button class="icon-btn" id="btn-clear-format" type="button" title="Clear formatting" aria-label="Clear formatting">⌫</button>
+    <span class="sep"></span>
+    <button class="btn" id="btn-run-py" type="button" title="Re-run every Python cell">▶ Run Python</button>
+  </div>
+
+  <div class="formula-bar">
+    <span id="cell-ref" class="cell-ref">A1</span>
+    <span class="fx-label" aria-hidden="true">fx</span>
+    <textarea id="fx" rows="1" spellcheck="false" aria-label="Cell contents" placeholder="Type a value, =FORMULA(…) or =py code   (Shift+Enter for a new line)"></textarea>
+  </div>
+
+  <div id="py-banner" class="banner" hidden>
+    This workbook contains Python cells. They were not run because the file was opened from disk.
+    <button class="btn primary" id="btn-trust" type="button">Run Python for this workbook</button>
+  </div>
+
+  <main class="workspace">
+    <section class="sheet">
+      <div id="grid" class="grid-scroll" tabindex="0" aria-label="Spreadsheet"></div>
+      <footer class="statusbar">
+        <span id="status-text" class="status-text"></span>
+        <button class="btn ghost small" id="btn-add-rows" type="button">+100 rows</button>
+      </footer>
+    </section>
+    <aside id="ai-panel" class="ai-panel" aria-label="AI assistant"></aside>
+  </main>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

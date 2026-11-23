@@ -244,7 +244,7 @@ async function setup() {
   state.installedAt = new Date().toISOString();
   writeState(state);
   say('\nDone. Start the website with: npm start   (http://127.0.0.1:5173)');
-  say('To undo everything later: npm run uninstall');
+  say('To undo everything later, run uninstall.cmd (Windows) or uninstall.sh in the Grids folder.');
 }
 
 // ---------- uninstall ----------
@@ -271,7 +271,8 @@ async function uninstall() {
   if (state.workspace && existsSync(state.workspace)) say(`\nYour workbooks in ${state.workspace} were left alone. Delete that folder yourself if you want them gone.`);
 
   const build = join(REPO, 'desktop', 'build');
-  if (existsSync(build) && (await yes(`\nDelete the desktop build output (${build})?`, true))) {
+  if (existsSync(build) && !(await yes(`\nDelete the desktop build output (${build})?`, true))) say('  Kept.');
+  else if (existsSync(build)) {
     spawnSync(process.platform === 'win32' ? 'cmd' : 'rm', process.platform === 'win32' ? ['/c', 'rmdir', '/s', '/q', build] : ['-rf', build], { windowsHide: true });
     say(existsSync(build) ? '  Could not delete it (in use?).' : '  Deleted.');
   }
@@ -284,7 +285,8 @@ async function uninstall() {
   } catch {}
   say('\nThe website also autosaves the open workbook in your browser: use File → New there, or clear');
   say('site data for 127.0.0.1:5173, to remove it.');
-  say(`\nTo finish, delete the Grids folder itself: ${REPO}`);
+  // uninstall.cmd / uninstall.sh ask about deleting the folder themselves
+  if (!process.argv.includes('--from-script')) say(`\nTo finish, delete the Grids folder itself (or run uninstall.cmd / uninstall.sh, which offers to): ${REPO}`);
 }
 
 // ---------- entry ----------

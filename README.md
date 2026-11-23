@@ -92,13 +92,22 @@ Limits on what it can touch:
 
 ## Uninstall
 
-```bash
-cd web && npm run uninstall
-```
+Run the uninstall script in the Grids folder:
 
-This removes the Claude Code registration and the desktop build output, and asks before
-deleting each key file. Your workbooks are never deleted. Then delete the `grids` folder.
-For any other MCP client, remove its `grids` entry by hand.
+| OS | Command |
+|---|---|
+| Windows | double-click `uninstall.cmd`, or run it in a terminal |
+| macOS / Linux | `sh uninstall.sh` |
+
+It asks before each step, and every question except the build output defaults to *no*:
+1. It removes Grids from Claude Code's MCP servers.
+2. It offers to delete each key file and its usage counts.
+3. It offers to delete the desktop build output.
+4. It offers to delete the Grids folder itself, warning first if it has uncommitted changes.
+
+Your workbooks are never deleted. For other MCP clients, remove their `grids` entry by hand.
+Without Node, the script prints these steps for you to do by hand.
+`cd web && npm run uninstall` does the same, apart from deleting the folder.
 
 ## Status
 

@@ -6,6 +6,7 @@ import grids.model.CellFormat;
 import grids.model.Workbook;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -115,6 +116,32 @@ public final class DesktopSmoke {
         check("http non-local base URL rejected", throwsStatus(() -> ed.addKey("X", "k", "", "http://example.com/v1", ""), 400), "");
         check("bad model on a subscription rejected", throwsStatus(() -> ed.addSubscription("X", "claude", "", "x; rm -rf /"), 400), "");
         check("reserved name rejected", throwsStatus(() -> ed.addKey("default", "k", "", "", ""), 400), "");
+        check("duplicate add refused (409)", throwsStatus(() -> ed.addKey("GROQ1", "other", "", "", ""), 409)
+                && throwsStatus(() -> ed.addSubscription("groq1", "claude", "", ""), 409), "");
+        Files.writeString(env, Files.readString(env) + "AI_SUB_MINE_BIN=C:/tools/claude.cmd\n");
+        ed.updateKey("GROQ1", "", "700", "", "");
+        ed.updateSubscription("MINE", "", "40", "haiku");
+        String edited = Files.readString(env);
+        check("edit keeps a blank key and a hand-set _BIN", edited.contains("AI_KEY_GROQ1=\"gsk_test\"") && edited.contains("AI_KEY_GROQ1_LIMIT=700")
+                && !edited.contains("llama-3.3") && edited.contains("AI_SUB_MINE_BIN=C:/tools/claude.cmd") && edited.contains("AI_SUB_MINE_MODEL=haiku"), edited);
+        KeyRing.View gv = ed.summary().stream().filter(x -> x.name().equals("GROQ1")).findFirst().orElseThrow();
+        check("summary prefills edits without the key", gv.configLimit().equals("700") && gv.editable() && gv.hint().equals("…test"), gv);
+        check("edit of a missing name is 404", throwsStatus(() -> ed.updateKey("MINE", "x", "", "", ""), 404)
+                && throwsStatus(() -> ed.removeKey("NOPE"), 404), "");
+        ed.removeKey("GROQ1");
+        check("removing the default falls back to auto", Files.readString(env).contains("AI_KEY_SELECT=auto") && ed.defaultSelection().equals("auto"), Files.readString(env));
+        String scrubbed = KeyRing.redact("bad key gsk_abcdefghijk and Bearer abc.def.ghijk, mine=kb-secret-2", List.of("kb-secret-2"));
+        check("errors are scrubbed of keys", !scrubbed.contains("gsk_abc") && !scrubbed.contains("abc.def") && !scrubbed.contains("kb-secret"), scrubbed);
+        check("synced folders detected", KeyRing.inSyncedFolder("C:\\Users\\me\\OneDrive\\x\\.env", Map.of())
+                && !KeyRing.inSyncedFolder("C:\\Users\\me\\.grids\\.env", Map.of("OneDrive", "C:\\Users\\me\\OneDrive")), "");
+        if (System.getProperty("os.name", "").toLowerCase().startsWith("windows")) {
+            Process p = new ProcessBuilder("icacls", env.toString()).redirectErrorStream(true).start();
+            String acl = new String(p.getInputStream().readAllBytes());
+            p.waitFor();
+            check("key file ACL is owner-only", !acl.contains("(I)") && !acl.contains("Everyone") && !acl.contains("BUILTIN\\Users"), acl);
+        } else {
+            check("key file is mode 600", PosixFilePermissions.toString(Files.getPosixFilePermissions(env)).equals("rw-------"), "");
+        }
         check("failure classification", Subscriptions.classifyFailure("You've hit your usage limit") == 429
                 && Subscriptions.classifyFailure("Please log in first") == 401 && Subscriptions.classifyFailure("segfault") == 500, "");
 

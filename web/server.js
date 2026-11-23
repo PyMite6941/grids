@@ -14,9 +14,17 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runAssistant, allowCustomProvider, AiError } from './lib/ai.js';
-import { KeyRing } from './lib/keyring.js';
+import { KeyRing, envFilePath, repoEnvPath } from './lib/keyring.js';
 import { KINDS, detect } from './lib/subscriptions.js';
 import { localOnly, keyEditAllowed as keyEditAllowedFor } from './lib/local-guard.js';
+import { existsSync } from 'node:fs';
+
+// `npm start` loads the repo .env; a key file moved to ~/.grids (npm run setup) is loaded
+// here instead. Variables already set in the environment win, as with --env-file.
+{
+  const f = envFilePath();
+  if (f !== repoEnvPath() && existsSync(f)) process.loadEnvFile(f);
+}
 
 const PORT = Number(process.env.PORT) || 5173;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -142,6 +150,8 @@ async function handleKeys(req, res) {
     const body = await readJson(req);
     if (body.action === 'add') ring.addKey(body);
     else if (body.action === 'add-sub') ring.addSubscription(body);
+    else if (body.action === 'update') ring.updateKey(body);
+    else if (body.action === 'update-sub') ring.updateSubscription(body);
     else if (body.action === 'remove') ring.removeKey(String(body.name ?? ''));
     else if (body.action === 'select') ring.setSelection(String(body.name ?? ''));
     else return send(res, 400, { error: 'unknown action' });
@@ -168,6 +178,8 @@ const server = createServer(async (req, res) => {
       allowSubscriptions: ALLOW_SUBS,
       subscriptionTypes: ALLOW_SUBS ? Object.entries(KINDS).map(([kind, k]) => ({ kind, label: k.label, installed: Boolean(detect(k.bin)), login: k.login })) : [],
       canEditKeys: CAN_EDIT_KEYS,
+      // Only a local editor sees where the file is; anyone sees whether it is in a synced folder
+      keyFile: CAN_EDIT_KEYS ? ring.fileInfo() : { synced: ring.fileInfo().synced },
     });
   }
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'method not allowed' });
@@ -176,7 +188,10 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
+  ring.secure();
   const keys = ring.summary();
+  const file = ring.fileInfo();
+  if (file.synced) console.warn(`Warning: the key file ${file.path} is in a cloud-synced folder, so your keys are uploaded with it. Run "npm run setup" to move it to ${file.homePath}.`);
   console.log(`Grids running at http://${HOST}:${PORT}`);
   console.log(keys.length
     ? `AI keys: ${keys.map((k) => `${k.name} (${k.model})`).join(', ')}; selection: ${ring.defaultSelection()}`

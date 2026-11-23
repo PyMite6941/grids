@@ -135,6 +135,7 @@ export class AiPanel {
     }
     this.#renderConnections();
     if (this.dialog.open) this.#renderKeyList();
+    if (this.fileWarn) this.#renderFileWarning();
   }
 
   #renderConnections() {
@@ -263,8 +264,10 @@ export class AiPanel {
       baseUrl: el('input', { type: 'url', placeholder: 'default: server AI_BASE_URL (Groq)' }),
       model: el('input', { type: 'text', placeholder: 'default: server AI_MODEL' }),
     });
-    this.addKeyForm = el('form', { class: 'key-form', onsubmit: (e) => { e.preventDefault(); this.#editKeys({ action: 'add', ...this.#values(f) }, f); } },
-      el('h3', {}, 'Add an API key'),
+    this.keyHead = el('h3', {}, 'Add an API key');
+    this.keySubmit = el('button', { class: 'btn primary', type: 'submit' }, 'Add key');
+    this.addKeyForm = el('form', { class: 'key-form', onsubmit: (e) => { e.preventDefault(); this.#submitForm('key'); } },
+      this.keyHead,
       el('p', { class: 'muted' }, 'Any OpenAI-compatible provider: Groq, OpenRouter, OpenAI, Gemini, Together, DeepSeek… Saved to the .env on this computer only.'),
       el('div', { class: 'grid2' },
         el('label', {}, 'Name', f.name),
@@ -273,7 +276,7 @@ export class AiPanel {
       el('div', { class: 'grid2' },
         el('label', {}, 'Base URL', f.baseUrl),
         el('label', {}, 'Model', f.model)),
-      el('div', { class: 'dialog-row' }, el('button', { class: 'btn primary', type: 'submit' }, 'Add key')));
+      el('div', { class: 'dialog-row' }, this.#cancelButton(), this.keySubmit));
 
     const s = (this.subFields = {
       kind: el('select', {}),
@@ -283,8 +286,10 @@ export class AiPanel {
     });
     this.subHint = el('p', { class: 'muted' });
     s.kind.addEventListener('change', () => this.#updateSubHint());
-    this.addSubForm = el('form', { class: 'key-form', onsubmit: (e) => { e.preventDefault(); this.#editKeys({ action: 'add-sub', ...this.#values(s) }, s); } },
-      el('h3', {}, 'Add a subscription'),
+    this.subHead = el('h3', {}, 'Add a subscription');
+    this.subSubmit = el('button', { class: 'btn primary', type: 'submit' }, 'Add subscription');
+    this.addSubForm = el('form', { class: 'key-form', onsubmit: (e) => { e.preventDefault(); this.#submitForm('sub'); } },
+      this.subHead,
       el('p', { class: 'muted' }, 'Use a plan you already pay for. Grids runs the vendor’s own CLI on this computer, signed in with your account. No key is stored.'),
       el('label', {}, 'Subscription', s.kind),
       this.subHint,
@@ -292,7 +297,7 @@ export class AiPanel {
         el('label', {}, 'Name', s.name),
         el('label', {}, 'Daily request limit', s.limit)),
       el('label', {}, 'Model', s.model),
-      el('div', { class: 'dialog-row' }, el('button', { class: 'btn primary', type: 'submit' }, 'Add subscription')));
+      el('div', { class: 'dialog-row' }, this.#cancelButton(), this.subSubmit));
 
     // Advanced: browser-supplied provider, only when the server allows it
     this.fields = {
@@ -315,6 +320,7 @@ export class AiPanel {
         el('h2', {}, 'AI keys & subscriptions'),
         el('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Close', onclick: () => this.dialog.close() }, '✕')),
       el('p', { class: 'muted' }, 'Pick one in the panel, or choose Auto: it uses whichever has the most of its daily limit left and switches when one is rate-limited or used up.'),
+      this.fileWarn = el('p', { class: 'key-error', hidden: '' }),
       this.keyList,
       this.keyMsg,
       this.editNote,
@@ -325,6 +331,71 @@ export class AiPanel {
 
   #values(fields) {
     return Object.fromEntries(Object.entries(fields).map(([k, f]) => [k, f.value.trim()]));
+  }
+
+  #cancelButton() {
+    const b = el('button', { class: 'btn', type: 'button', hidden: '', onclick: () => this.#endEdit() }, 'Cancel');
+    (this.cancelButtons ??= []).push(b);
+    return b;
+  }
+
+  /** Submit the key or subscription form: add, or update the connection being edited. */
+  #submitForm(type) {
+    const fields = type === 'sub' ? this.subFields : this.keyFields;
+    const values = this.#values(fields);
+    const editing = this.editing?.type === type ? this.editing.name : null;
+    const action = editing ? (type === 'sub' ? 'update-sub' : 'update') : type === 'sub' ? 'add-sub' : 'add';
+    this.#editKeys({ action, ...values, ...(editing ? { name: editing } : {}) }, fields);
+  }
+
+  /** Load a connection into its form for editing. The API key itself is never sent back to the page. */
+  #startEdit(k) {
+    this.#endEdit();
+    this.editing = { type: k.type, name: k.name };
+    const c = k.config ?? {};
+    if (k.type === 'sub') {
+      const s = this.subFields;
+      s.kind.value = k.kind;
+      s.name.value = k.name;
+      s.name.disabled = true;
+      s.limit.value = c.limit;
+      s.model.value = c.model;
+      this.subHead.textContent = `Edit subscription ${k.name}`;
+      this.subSubmit.textContent = 'Save changes';
+      this.#updateSubHint();
+      this.addSubForm.scrollIntoView({ block: 'nearest' });
+      s.limit.focus();
+    } else {
+      const f = this.keyFields;
+      f.name.value = k.name;
+      f.name.disabled = true;
+      f.apiKey.value = '';
+      f.apiKey.required = false;
+      f.apiKey.placeholder = `leave blank to keep the current key (${k.hint})`;
+      f.limit.value = c.limit;
+      f.baseUrl.value = c.baseUrl;
+      f.model.value = c.model;
+      this.keyHead.textContent = `Edit API key ${k.name}`;
+      this.keySubmit.textContent = 'Save changes';
+      this.addKeyForm.scrollIntoView({ block: 'nearest' });
+      f.limit.focus();
+    }
+    for (const b of this.cancelButtons) b.hidden = false;
+  }
+
+  #endEdit() {
+    this.editing = null;
+    for (const f of [...Object.values(this.keyFields), ...Object.values(this.subFields)]) {
+      if (f.tagName !== 'SELECT') f.value = '';
+      f.disabled = false;
+    }
+    this.keyFields.apiKey.required = true;
+    this.keyFields.apiKey.placeholder = 'gsk_… / sk-or-… / sk-…';
+    this.keyHead.textContent = 'Add an API key';
+    this.keySubmit.textContent = 'Add key';
+    this.subHead.textContent = 'Add a subscription';
+    this.subSubmit.textContent = 'Add subscription';
+    for (const b of this.cancelButtons ?? []) b.hidden = true;
   }
 
   #updateSubHint() {
@@ -347,9 +418,29 @@ export class AiPanel {
           el('div', { class: 'muted' }, `${k.type === 'sub' ? k.label : k.host} · ${k.model}${k.type === 'key' ? ` · ${k.hint}` : ''}`),
           el('div', { class: 'key-usage' }, `${usageText(k)} · ${k.tokens.toLocaleString()} tokens${k.rateLimited ? ` · ${k.rateLimited}× rate-limited` : ''}`),
           k.lastError ? el('div', { class: 'key-error' }, k.lastError) : null),
-        s.canEditKeys && !['LOCAL'].includes(k.name)
-          ? el('button', { class: 'btn', type: 'button', onclick: () => this.#editKeys({ action: 'remove', name: k.name }) }, 'Remove')
+        s.canEditKeys && k.name !== 'LOCAL'
+          ? el('div', { class: 'key-actions' },
+              k.editable ? el('button', { class: 'btn', type: 'button', onclick: () => this.#startEdit(k) }, 'Edit') : null,
+              el('button', { class: 'btn', type: 'button', onclick: () => this.#confirmRemove(k) }, 'Remove'))
           : null));
+    }
+  }
+
+  #confirmRemove(k) {
+    const what = k.type === 'sub' ? 'subscription' : 'API key';
+    const extra = k.type === 'sub' ? ' Your plan and CLI sign-in are not affected.' : ' The key is deleted from the .env file; keep a copy if you need it.';
+    if (!window.confirm(`Remove the ${what} ${k.name}?${extra}`)) return;
+    if (this.editing?.name === k.name) this.#endEdit();
+    this.#editKeys({ action: 'remove', name: k.name });
+  }
+
+  #renderFileWarning() {
+    const f = this.status?.keyFile;
+    this.fileWarn.hidden = !f?.synced;
+    if (f?.synced) {
+      this.fileWarn.textContent = f.path
+        ? `Your key file (${f.path}) is in a cloud-synced folder, so your keys are uploaded with it. Run "npm run setup" in web/ to move it to ${f.homePath}.`
+        : 'This server keeps its key file in a cloud-synced folder.';
     }
   }
 
@@ -360,9 +451,11 @@ export class AiPanel {
       const res = await fetch('/api/ai/keys', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
-      this.keyMsg.textContent = body.action === 'remove' ? `Removed ${body.name}.` : `Saved ${String(body.name).toUpperCase()}.`;
-      if (clearFields) for (const f of Object.values(clearFields)) if (f.tagName !== 'SELECT') f.value = '';
-      if (body.action !== 'remove') store.set(CONNECTION_KEY, null); // let the new one be reachable via Auto/default
+      this.keyMsg.textContent = body.action === 'remove' ? `Removed ${body.name}.` : body.action.startsWith('update') ? `Updated ${body.name}.` : `Added ${String(body.name).toUpperCase()}.`;
+      const was = this.editing;
+      if (was) this.#endEdit();
+      else if (clearFields) for (const f of Object.values(clearFields)) if (f.tagName !== 'SELECT') f.value = '';
+      if (body.action === 'add' || body.action === 'add-sub') store.set(CONNECTION_KEY, null); // let the new one be reachable via Auto/default
       await this.refreshStatus();
     } catch (e) {
       this.keyMsg.textContent = e.message;
@@ -395,6 +488,7 @@ export class AiPanel {
     const p = this.#provider() ?? {};
     for (const [k, f] of Object.entries(this.fields)) f.value = p[k] ?? '';
     this.keyMsg.textContent = '';
+    this.#endEdit();
     this.#renderKeyList();
     this.dialog.showModal();
   }

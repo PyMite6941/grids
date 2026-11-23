@@ -198,3 +198,91 @@ test('add rejects injection into the .env and unsafe values', () => {
   assert.throws(() => ring.addSubscription({ name: 'X', kind: 'claude', model: 'opus; rm -rf /' }), /Model/);
   assert.ok(!existsSync(file));
 });
+
+test('edit keeps the stored key when the field is blank, and never duplicates names', () => {
+  const { env, file } = setup('AI_KEY_GROQ="gsk_secret1234"\nAI_KEY_GROQ_LIMIT=5\nAI_SUB_CLAUDE=claude\nAI_SUB_CLAUDE_BIN=C:/tools/claude.cmd\n');
+  const ring = new KeyRing(env);
+  assert.throws(() => ring.addKey({ name: 'groq', apiKey: 'gsk_other' }), (e) => e.status === 409);
+  assert.throws(() => ring.addSubscription({ name: 'GROQ', kind: 'claude' }), (e) => e.status === 409);
+  ring.updateKey({ name: 'GROQ', apiKey: '', limit: '700', model: 'openai/gpt-oss-20b' });
+  let text = readFileSync(file, 'utf8');
+  assert.match(text, /^AI_KEY_GROQ="gsk_secret1234"$/m);
+  assert.match(text, /^AI_KEY_GROQ_LIMIT=700$/m);
+  assert.match(text, /^AI_KEY_GROQ_MODEL=openai\/gpt-oss-20b$/m);
+  ring.updateKey({ name: 'GROQ', apiKey: 'gsk_newkey9876', limit: '' });
+  text = readFileSync(file, 'utf8');
+  assert.match(text, /^AI_KEY_GROQ="gsk_newkey9876"$/m);
+  assert.doesNotMatch(text, /AI_KEY_GROQ_LIMIT|AI_KEY_GROQ_MODEL|gsk_secret1234/);
+  // A subscription edit keeps its hand-set CLI path
+  ring.updateSubscription({ name: 'CLAUDE', limit: '40', model: 'sonnet' });
+  text = readFileSync(file, 'utf8');
+  assert.match(text, /^AI_SUB_CLAUDE=claude$/m);
+  assert.match(text, /^AI_SUB_CLAUDE_BIN=C:\/tools\/claude.cmd$/m);
+  assert.match(text, /^AI_SUB_CLAUDE_LIMIT=40$/m);
+  assert.throws(() => ring.updateKey({ name: 'CLAUDE', apiKey: 'x' }), (e) => e.status === 404);
+  assert.throws(() => ring.updateSubscription({ name: 'GROQ' }), (e) => e.status === 404);
+  assert.throws(() => ring.removeKey('NOPE'), (e) => e.status === 404);
+  // The summary prefills edits from the file but never carries a key
+  const g = ring.summary().find((k) => k.name === 'GROQ');
+  assert.deepEqual(g.config, { limit: '', baseUrl: '', model: '' });
+  assert.equal(g.hint, '…9876');
+  assert.doesNotMatch(JSON.stringify(ring.summary()), /gsk_newkey9876/);
+});
+
+test('removing the default connection falls back to auto', () => {
+  const { env, file } = setup('AI_KEY_A="k1"\nAI_KEY_B="k2"\nAI_KEY_SELECT=A\n');
+  const ring = new KeyRing(env);
+  ring.removeKey('A');
+  assert.match(readFileSync(file, 'utf8'), /^AI_KEY_SELECT=auto$/m);
+  assert.equal(ring.defaultSelection(), 'auto');
+});
+
+test('stored errors are scrubbed of keys', async () => {
+  const { env, dir } = setup('AI_KEY_A="gsk_abcdefghijklmnop"\n');
+  const ring = new KeyRing(env);
+  ring.record('A', { ok: false, status: 401, error: 'Invalid API Key: gsk_abcdefghijklmnop (also sk-proj-zzzzzzzzzzzz, Bearer abc.def.ghijk)' });
+  const usage = readFileSync(join(dir, '.grids-usage.json'), 'utf8');
+  assert.doesNotMatch(usage, /gsk_abc|sk-proj|abc\.def/);
+  assert.match(usage, /\[redacted\]/);
+});
+
+test('key file is owner-only and synced folders are detected', async () => {
+  const { env, file } = setup();
+  const ring = new KeyRing(env);
+  ring.addKey({ name: 'A', apiKey: 'k' });
+  if (process.platform === 'win32') {
+    const { execFileSync } = await import('node:child_process');
+    const acl = execFileSync('icacls', [file], { encoding: 'utf8' });
+    assert.doesNotMatch(acl, /\(I\)/, 'no inherited entries');
+    assert.doesNotMatch(acl, /Everyone|Users:|Authenticated Users/);
+  } else {
+    const { statSync } = await import('node:fs');
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+  }
+  const { inSyncedFolder } = await import('../lib/keyring.js');
+  assert.ok(inSyncedFolder(String.raw`C:\Users\me\OneDrive\Docs\.env`, {}));
+  assert.ok(inSyncedFolder('/Users/me/Library/Mobile Documents/x/.env', {}));
+  assert.ok(inSyncedFolder(String.raw`D:\Sync\proj\.env`, { OneDrive: String.raw`D:\Sync` }));
+  assert.ok(!inSyncedFolder(String.raw`C:\Users\me\.grids\.env`, { OneDrive: String.raw`C:\Users\me\OneDrive` }));
+  assert.ok(!inSyncedFolder('/home/me/.grids/.env', {}));
+});
+
+test('setup moves the key file without losing it, and the MCP snippet points at mcp.js', async () => {
+  const { moveKeyFile, mcpConfigSnippet, readState, writeState } = await import('../setup.mjs');
+  const a = setup('AI_KEY_A="k-secret"\n');
+  writeFileSync(join(a.dir, '.grids-usage.json'), '{"day":"x","keys":{}}');
+  const target = join(mkdtempSync(join(tmpdir(), 'grids-home-')), 'sub', '.env');
+  assert.equal(moveKeyFile(a.file, target), true);
+  assert.ok(!existsSync(a.file));
+  assert.equal(readFileSync(target, 'utf8'), 'AI_KEY_A="k-secret"\n');
+  assert.ok(existsSync(join(target, '..', '.grids-usage.json')));
+  const b = setup('AI_KEY_B="x"\n');
+  assert.throws(() => moveKeyFile(b.file, target), /already exists/);
+  assert.ok(existsSync(b.file), 'a refused move keeps the original');
+  const snip = JSON.parse(mcpConfigSnippet('/tmp/ws'));
+  assert.match(snip.mcpServers.grids.args[0], /mcp\.js$/);
+  assert.deepEqual(snip.mcpServers.grids.args.slice(1), ['--dir', '/tmp/ws']);
+  const st = join(a.dir, 'state.json');
+  writeState({ workspace: 'w' }, st);
+  assert.deepEqual(readState(st), { workspace: 'w' });
+});

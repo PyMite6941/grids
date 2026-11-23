@@ -28,6 +28,7 @@ import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
 import javax.swing.JScrollPane;
@@ -51,6 +52,7 @@ public final class AiPanel extends JPanel {
     private final Supplier<String> selection;
     private final AiClient client = new AiClient();
     private final KeyRing ring = new KeyRing();
+    { ring.secure(); } // re-apply owner-only permissions to an existing key file
     private final List<AiClient.Message> history = new ArrayList<>();
     private final JPanel log = new JPanel();
     private final JScrollPane logScroll;
@@ -315,6 +317,9 @@ public final class AiPanel extends JPanel {
         JPanel list = new JPanel();
         list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
         JLabel msg = new JLabel(" ");
+        // Set once the forms exist: loads a row into its form for editing
+        java.util.concurrent.atomic.AtomicReference<java.util.function.Consumer<KeyRing.View>> startEdit = new java.util.concurrent.atomic.AtomicReference<>();
+        String[] editing = new String[2]; // {type, name} while a row is being edited
 
         Runnable[] render = new Runnable[1];
         render[0] = () -> {
@@ -337,11 +342,22 @@ public final class AiPanel extends JPanel {
                 row.add(text, BorderLayout.CENTER);
                 if (!"LOCAL".equals(v.name())) {
                     JButton rm = new JButton("Remove");
-                    rm.addActionListener(e -> edit(msg, render[0], () -> {
-                        ring.removeKey(v.name());
-                        return "Removed " + v.name() + ".";
-                    }));
-                    JPanel holder = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+                    rm.addActionListener(e -> {
+                        String what = sub ? "subscription" : "API key";
+                        String extra = sub ? "Your plan and CLI sign-in are not affected." : "The key is deleted from the .env file; keep a copy if you need it.";
+                        if (JOptionPane.showConfirmDialog(d, "Remove the " + what + " " + v.name() + "?\n" + extra, "Remove " + v.name(),
+                                JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
+                        edit(msg, render[0], () -> {
+                            ring.removeKey(v.name());
+                            return "Removed " + v.name() + ".";
+                        });
+                    });
+                    JPanel holder = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+                    if (v.editable()) {
+                        JButton ed = new JButton("Edit");
+                        ed.addActionListener(e -> startEdit.get().accept(v));
+                        holder.add(ed);
+                    }
                     holder.add(rm);
                     row.add(holder, BorderLayout.EAST);
                 }
@@ -373,21 +389,8 @@ public final class AiPanel extends JPanel {
         JTextField subModel = new JTextField(14);
         subModel.setToolTipText("Leave empty for the CLI default (e.g. sonnet, haiku, gpt-5, gemini-2.5-pro)");
         JButton addSub = new JButton("Add subscription");
-        addSub.addActionListener(e -> edit(msg, render[0], () -> {
-            String k = kinds.get(Math.max(0, kind.getSelectedIndex()));
-            String n = ring.addSubscription(subName.getText().isBlank() ? k : subName.getText(), k, subLimit.getText(), subModel.getText());
-            subName.setText("");
-            subLimit.setText("");
-            subModel.setText("");
-            return "Saved " + n + ".";
-        }));
-        JPanel subForm = section("Add a subscription",
-                "Use a plan you already pay for. Grids runs the vendor's own CLI on this computer, signed in with your account. No key is stored.",
-                labelled("Subscription", kind), subHint,
-                grid(labelled("Name", subName), labelled("Daily request limit", subLimit), labelled("Model", subModel)),
-                right(addSub));
-
-        // Add an API key
+        JButton cancelSub = new JButton("Cancel");
+        // Add an API key (fields first: the edit/cancel logic below touches both forms)
         JTextField keyName = new JTextField(10);
         JPasswordField keyValue = new JPasswordField(24);
         JTextField keyLimit = new JTextField(6);
@@ -395,17 +398,82 @@ public final class AiPanel extends JPanel {
         keyBase.setToolTipText("Empty = AI_BASE_URL or Groq. For Ollama: http://localhost:11434/v1");
         JTextField keyModel = new JTextField(14);
         JButton addKey = new JButton("Add key");
+        JButton cancelKey = new JButton("Cancel");
+
+        Runnable endEdit = () -> {
+            editing[0] = null;
+            editing[1] = null;
+            for (JTextField f : List.of(subName, subLimit, subModel, keyName, keyValue, keyLimit, keyBase, keyModel)) {
+                f.setText("");
+                f.setEnabled(true);
+            }
+            kind.setEnabled(true);
+            keyValue.setToolTipText(null);
+            addSub.setText("Add subscription");
+            addKey.setText("Add key");
+            cancelSub.setVisible(false);
+            cancelKey.setVisible(false);
+        };
+        cancelSub.addActionListener(e -> endEdit.run());
+        cancelKey.addActionListener(e -> endEdit.run());
+        startEdit.set(v -> {
+            endEdit.run();
+            editing[0] = v.type();
+            editing[1] = v.name();
+            if ("sub".equals(v.type())) {
+                kind.setSelectedIndex(Math.max(0, kinds.indexOf(v.kind())));
+                subName.setText(v.name());
+                subName.setEnabled(false);
+                subLimit.setText(v.configLimit());
+                subModel.setText(v.configModel());
+                addSub.setText("Save changes to " + v.name());
+                cancelSub.setVisible(true);
+                subLimit.requestFocusInWindow();
+            } else {
+                keyName.setText(v.name());
+                keyName.setEnabled(false);
+                keyValue.setToolTipText("Leave blank to keep the current key (" + v.hint() + ")");
+                keyLimit.setText(v.configLimit());
+                keyBase.setText(v.configBaseUrl());
+                keyModel.setText(v.configModel());
+                addKey.setText("Save changes to " + v.name());
+                cancelKey.setVisible(true);
+                keyLimit.requestFocusInWindow();
+            }
+            msg.setText(v.type().equals("sub") ? "Editing " + v.name() + " below." : "Editing " + v.name() + " below. Leave the API key blank to keep it.");
+        });
+        cancelSub.setVisible(false);
+        cancelKey.setVisible(false);
+
+        addSub.addActionListener(e -> edit(msg, render[0], () -> {
+            String k = kinds.get(Math.max(0, kind.getSelectedIndex()));
+            boolean upd = "sub".equals(editing[0]);
+            String n = upd ? ring.updateSubscription(editing[1], k, subLimit.getText(), subModel.getText())
+                    : ring.addSubscription(subName.getText().isBlank() ? k : subName.getText(), k, subLimit.getText(), subModel.getText());
+            endEdit.run();
+            return (upd ? "Updated " : "Added ") + n + ".";
+        }));
+        JPanel subForm = section("Add a subscription",
+                "Use a plan you already pay for. Grids runs the vendor's own CLI on this computer, signed in with your account. No key is stored.",
+                labelled("Subscription", kind), subHint,
+                grid(labelled("Name", subName), labelled("Daily request limit", subLimit), labelled("Model", subModel)),
+                right(cancelSub, addSub));
+
         addKey.addActionListener(e -> edit(msg, render[0], () -> {
-            String n = ring.addKey(keyName.getText(), new String(keyValue.getPassword()), keyLimit.getText(), keyBase.getText(), keyModel.getText());
-            for (JTextField f : List.of(keyName, keyValue, keyLimit, keyBase, keyModel)) f.setText("");
-            return "Saved " + n + ".";
+            boolean upd = "key".equals(editing[0]);
+            char[] pw = keyValue.getPassword();
+            String n = upd ? ring.updateKey(editing[1], new String(pw), keyLimit.getText(), keyBase.getText(), keyModel.getText())
+                    : ring.addKey(keyName.getText(), new String(pw), keyLimit.getText(), keyBase.getText(), keyModel.getText());
+            java.util.Arrays.fill(pw, '\0');
+            endEdit.run();
+            return (upd ? "Updated " : "Added ") + n + ".";
         }));
         JPanel keyForm = section("Add an API key",
                 "Any OpenAI-compatible provider: Groq, OpenRouter, OpenAI, Gemini, Together, DeepSeek, Ollama…",
                 grid(labelled("Name", keyName), labelled("Daily request limit", keyLimit)),
                 labelled("API key", keyValue),
                 grid(labelled("Base URL", keyBase), labelled("Model", keyModel)),
-                right(addKey));
+                right(cancelKey, addKey));
 
         JPanel body = new WidthTracking();
         body.setLayout(new BoxLayout(body, BoxLayout.Y_AXIS));
@@ -413,6 +481,11 @@ public final class AiPanel extends JPanel {
         body.add(left(new JLabel("<html><div style='width:" + TEXT_W + "px; color:gray'>Pick one in the AI panel, or choose Auto: it uses whichever has the most of its "
                 + "daily limit left and switches when one is rate-limited or used up.<br>Saved in " + SheetTable.escape(ring.path.toString())
                 + " — local only, never commit it.</div></html>")));
+        KeyRing.FileInfo info = ring.fileInfo();
+        if (info.synced()) {
+            body.add(left(new JLabel("<html><div style='width:" + TEXT_W + "px; color:#b3261e'>This key file is in a cloud-synced folder, so your keys are uploaded with it. "
+                    + "Run <b>npm run setup</b> in web/ to move it to " + SheetTable.escape(info.homePath().toString()) + ".</div></html>")));
+        }
         body.add(Box.createVerticalStrut(8));
         body.add(list);
         body.add(left(msg));
@@ -485,9 +558,9 @@ public final class AiPanel extends JPanel {
         return c;
     }
 
-    private static JPanel right(JComponent c) {
-        JPanel p = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 4));
-        p.add(c);
+    private static JPanel right(JComponent... cs) {
+        JPanel p = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
+        for (JComponent c : cs) p.add(c);
         p.setAlignmentX(Component.LEFT_ALIGNMENT);
         p.setMaximumSize(new Dimension(Integer.MAX_VALUE, p.getPreferredSize().height));
         return p;

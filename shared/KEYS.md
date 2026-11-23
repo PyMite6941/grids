@@ -1,17 +1,57 @@
 # AI keys & subscriptions
 
 Both apps read the same local `.env`, with the same rules, from `web/lib/keyring.js` and
-`desktop/src/grids/ai/KeyRing.java`. Add or remove connections from the app's AI → Keys
-screen, or edit the file by hand. Edits apply on the next request, with no restart.
+`desktop/src/grids/ai/KeyRing.java`. Manage connections in any of these ways:
+- the app's Keys screen (**⚙** in the web AI panel, **Keys** on desktop), which can add,
+  edit and remove;
+- `npm run setup` in `web/`;
+- editing the file by hand.
+
+Edits apply on the next request, with no restart.
+
+## Editing rules
+
+- **Add** refuses a name that's already in use (409), so a key is never overwritten by
+  accident. Use **Edit** instead.
+- **Edit** changes the limit, model and base URL. Leave the API key field blank to keep the
+  stored key. Typing a new key also clears that connection's cooldown. Editing a
+  subscription keeps its hand-set `_BIN` line.
+- **Remove** asks first. If the removed connection was the default, `AI_KEY_SELECT`
+  becomes `auto`.
+- Edit and remove work on named connections only. `DEFAULT` (the legacy `AI_API_KEY`)
+  can be removed but not edited. `LOCAL` isn't stored, so neither applies.
 
 ## Where the file is
 
 1. `GRIDS_ENV_FILE`, if set.
-2. Otherwise `grids/.env` at the repo root. The web server uses this path, and the desktop
-   app finds it by walking up to the folder that contains `shared/FORMAT.md`.
-3. Otherwise `~/.grids/.env`, used by an installed desktop copy.
+2. Otherwise `grids/.env` at the repo root, **if it exists**. The desktop app finds the
+   repo by walking up to the folder that contains `shared/FORMAT.md`.
+3. Otherwise `~/.grids/.env`, if it exists. `npm run setup` offers to move the key file
+   here, which keeps keys out of the project folder and out of cloud sync.
+4. Otherwise `grids/.env`, created on the first save (or `~/.grids/.env` for an
+   installed desktop copy with no repo).
 
 `.env` and `.grids-usage.json` are git-ignored. Never commit them.
+
+## How keys are protected
+
+- **The file is owner-only.** On macOS and Linux it is mode 600. On Windows, where chmod
+  does nothing, it gets an ACL with just your account (no inherited entries). This is
+  re-applied on every save and whenever an app starts.
+- **Writes are atomic.** Each save goes to a fresh temp file, which is then renamed over
+  the old one. A crash never leaves a half-written key file.
+- **Keys never leave the file.** The UI and API show a name and the last 4 characters.
+  Edit forms are prefilled from the file's other values, never the key.
+- **Errors are scrubbed.** Before an error is stored in the usage file or shown, Grids
+  removes any configured key and anything key-shaped (`sk-…`, `gsk_…`, `AIza…`,
+  `Bearer …`), since providers sometimes echo keys back.
+- **Synced folders are flagged.** Both apps and the server warn when the key file is in
+  OneDrive, Dropbox, iCloud or Google Drive, because the keys would be uploaded.
+- **Editing is local only.** The web server allows key editing only on loopback (see
+  below).
+
+The browser-only "Advanced" provider (`ALLOW_CUSTOM_PROVIDER`) is the exception. It keeps
+its key in that browser's localStorage, so use it only on your own machine.
 
 ## Format
 

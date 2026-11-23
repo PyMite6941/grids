@@ -7,6 +7,7 @@ import { GridView } from './grid.js';
 import { PythonRunner } from './python.js';
 import { AiPanel } from './ai.js';
 import * as store from './store.js';
+import { applyActions as applyActionsTo } from './actions.js';
 
 const MAX_UNDO = 100;
 const MAX_PY_ROUNDS = 25;
@@ -159,56 +160,8 @@ class App {
    * output is untrusted input. Returns a list of human-readable problems (skipped calls).
    */
   applyActions(actions) {
-    const problems = [];
-    this.change(
-      (st) => {
-        for (const { name, args } of actions) {
-          switch (name) {
-            case 'set_cells':
-              for (const c of Array.isArray(args.cells) ? args.cells : []) {
-                const k = normKey(c?.ref);
-                if (!k || typeof c.input !== 'string') { problems.push(`set_cells: bad cell ${JSON.stringify(c?.ref)}`); continue; }
-                if (c.input === '') st.cells.delete(k);
-                else st.cells.set(k, c.input.slice(0, store.MAX_INPUT_CHARS));
-              }
-              break;
-            case 'clear_range': {
-              const keys = store.rangeKeys(args.range);
-              if (!keys) { problems.push(`clear_range: bad range ${JSON.stringify(args.range)}`); break; }
-              for (const k of keys) {
-                st.cells.delete(k);
-                if (args.formats) st.formats.delete(k);
-              }
-              break;
-            }
-            case 'format_range': {
-              const keys = store.rangeKeys(args.range, 50_000);
-              if (!keys) { problems.push(`format_range: bad range ${JSON.stringify(args.range)}`); break; }
-              const { range, ...patch } = args;
-              for (const k of keys) {
-                const f = store.cleanFormat({ ...st.formats.get(k), ...patch });
-                if (f) st.formats.set(k, f);
-                else st.formats.delete(k);
-              }
-              break;
-            }
-            case 'set_column_width': {
-              const col = String(args.column ?? '').toUpperCase();
-              const w = store.clampWidth(args.width);
-              if (!/^[A-Z]{1,3}$/.test(col) || !w) { problems.push('set_column_width: bad column/width'); break; }
-              st.colWidths[col] = w;
-              break;
-            }
-            case 'set_title':
-              if (typeof args.title === 'string' && args.title.trim()) st.title = args.title.trim().slice(0, 200);
-              break;
-            default:
-              problems.push(`unknown action ${name}`);
-          }
-        }
-      },
-      { rebuild: true },
-    );
+    let problems = [];
+    this.change((st) => { problems = applyActionsTo(st, actions); }, { rebuild: true });
     $('#title').value = this.state.title;
     document.title = `Grids — ${this.state.title}`;
     return problems;

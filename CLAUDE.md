@@ -13,6 +13,9 @@ deps; it is becoming the main product, a hosted website) and `desktop/` (Java Sw
   - `fixtures/formulas.json`: the formula tests both engines must pass.
   - `ai/`: `tools.json`, the system prompt, and `text-protocol.md` for CLI subscriptions.
   - `python/grid_runtime.py`: the desktop Python worker.
+- `web/mcp.js`: an MCP server, so outside AIs can edit `.grid` files in one workspace folder.
+  It reuses `shared/ai/tools.json` and `web/public/js/actions.js`.
+- `web/setup.mjs`: `npm run setup` and `npm run uninstall`.
 - `web/lib/` holds the server-side modules: `ai.js`, `keyring.js`, `subscriptions.js` and
   `local-guard.js`. `web/public/` is the client; its formula engine is `public/engine/`.
 - In `desktop/src/grids/`:
@@ -27,12 +30,15 @@ deps; it is becoming the main product, a hosted website) and `desktop/` (Java Sw
 
 - **Parity**: a change to formulas, the file format, AI tools or key-ring rules goes into
   both apps, plus `shared/`. Both engines must pass `shared/fixtures/formulas.json`.
+- **Uninstall**: anything setup adds (MCP registration, `~/.grids/`) must be undone by
+  `npm run uninstall`. Never delete key files or workbooks without asking.
 - **Trust**: desktop Python has full machine access, so opened files stay untrusted until
   the user clicks *Enable Python*. AI auto-apply never applies changes that write Python
   cells.
 - **Secrets**:
-  - Keys live only in the git-ignored `.env`. The UI and the usage file see names, counts
-    and the last 4 characters, never a key.
+  - Keys live only in the git-ignored `.env`, which is owner-only (an ACL on Windows). The
+    UI and the usage file see names, counts and the last 4 characters, never a key, and
+    stored errors go through `redact`.
   - On the web server, key editing and subscriptions are allowed only when it is bound to
     loopback (`web/lib/local-guard.js`). Keep that guard tested.
 - **Subscriptions**: run the vendor's CLI only, with the prompt on stdin and no tools.

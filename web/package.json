@@ -4,10 +4,19 @@
   "private": true,
   "description": "Grids website: spreadsheet with formulas, Python cells and a pluggable AI",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "dev": "node --watch --env-file-if-exists=../.env server.js",
     "start": "node --env-file-if-exists=../.env server.js",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.js\"",
+    "setup": "node setup.mjs",
+    "uninstall": "node setup.mjs --uninstall",
+    "mcp": "node mcp.js"
+  },
+  "license": "MIT",
+  "bin": {
+    "grids-mcp": "./mcp.js"
   }
 }

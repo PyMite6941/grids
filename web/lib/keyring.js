@@ -15,8 +15,10 @@
 // Usage lives in .grids-usage.json beside the .env. It holds names and counts only,
 // never key material. The .env is re-read on every call, so edits apply without a restart.
 
-import { readFileSync, writeFileSync, renameSync, chmodSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, writeFileSync, renameSync, chmodSync, existsSync, unlinkSync, mkdirSync } from 'node:fs';
+import { dirname, join, sep } from 'node:path';
+import { homedir } from 'node:os';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { KINDS, detect, validModel } from './subscriptions.js';
 
@@ -27,8 +29,63 @@ const NAME_RE = /^[A-Z0-9_]{1,32}$/;
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
 const AUTH_COOLDOWN_MS = 60 * 60_000;
 
-export const envFilePath = (env = process.env) =>
-  env.GRIDS_ENV_FILE || fileURLToPath(new URL('../../.env', import.meta.url));
+export const repoEnvPath = () => fileURLToPath(new URL('../../.env', import.meta.url));
+export const homeEnvPath = () => join(homedir(), '.grids', '.env');
+
+/**
+ * GRIDS_ENV_FILE, else the repo's .env if it exists, else ~/.grids/.env if it exists,
+ * else the repo's .env (created on first save). Same order as KeyRing.java.
+ */
+export function envFilePath(env = process.env) {
+  if (env.GRIDS_ENV_FILE) return env.GRIDS_ENV_FILE;
+  const repo = repoEnvPath();
+  if (existsSync(repo)) return repo;
+  const home = homeEnvPath();
+  return existsSync(home) ? home : repo;
+}
+
+const SYNC_DIRS = ['onedrive', 'dropbox', 'google drive', 'googledrive', 'icloud drive', 'iclouddrive', 'mobile documents', 'box sync', 'pcloud'];
+
+/** True when the path is inside a cloud-synced folder, where keys would be uploaded. */
+export function inSyncedFolder(path, env = process.env) {
+  const p = String(path).toLowerCase();
+  const roots = [env.OneDrive, env.OneDriveConsumer, env.OneDriveCommercial].filter(Boolean).map((r) => r.toLowerCase());
+  if (roots.some((r) => p.startsWith(r.endsWith(sep) ? r : r + sep))) return true;
+  return p.split(/[\\/]/).some((seg) => SYNC_DIRS.some((d) => seg === d || seg.startsWith(d + ' -') || seg.startsWith(d + '-')));
+}
+
+// Key-shaped strings providers sometimes echo back in error messages.
+const KEY_PATTERNS = [/\b(?:sk|gsk|xai|pk|rk)[-_][A-Za-z0-9_-]{8,}/g, /\bAIza[0-9A-Za-z_-]{20,}/g, /\bBearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi];
+
+/** Remove the given secrets and anything key-shaped from text that will be stored or shown. */
+export function redact(text, secrets = []) {
+  let s = String(text ?? '');
+  for (const k of secrets) if (k && k.length >= 6) s = s.split(k).join('[redacted]');
+  for (const re of KEY_PATTERNS) s = s.replace(re, '[redacted]');
+  return s;
+}
+
+/**
+ * Make a file readable by its owner only. POSIX: mode 600. Windows: chmod is a no-op,
+ * so drop inherited ACEs and grant only the current user (icacls, no shell).
+ */
+export function secureFile(path) {
+  try {
+    if (process.platform === 'win32') {
+      const user = process.env.USERDOMAIN && process.env.USERNAME ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}` : process.env.USERNAME;
+      if (!user) return false;
+      execFileSync('icacls', [path, '/inheritance:r', '/grant:r', `${user}:F`], { stdio: 'ignore', windowsHide: true });
+    } else {
+      chmodSync(path, 0o600);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const err = (status, message) => Object.assign(new Error(message), { status });
+const HEADER = '# Grids AI keys — local only, never commit or share this file. See shared/KEYS.md.';
 
 /** Minimal .env parser: KEY=VALUE, `export `, quotes, # comments. */
 export function parseEnv(text) {
@@ -184,7 +241,8 @@ export class KeyRing {
     s.lastUsed = new Date(this.now()).toISOString();
     if (ok) s.lastError = '';
     else {
-      s.lastError = String(error).slice(0, 200);
+      const secrets = this.keys().map((k) => k.apiKey);
+      s.lastError = redact(error, secrets).slice(0, 200);
       if (status === 429) {
         s.rateLimited += 1;
         s.cooldownUntil = this.now() + (retryAfterS > 0 ? Math.min(retryAfterS, 3600) * 1000 : RATE_LIMIT_COOLDOWN_MS);
@@ -197,6 +255,8 @@ export class KeyRing {
 
   /** Public view for the UI: never includes the key itself. */
   summary() {
+    const v = this.vars();
+    const prefix = (k) => (k.type === 'sub' ? `AI_SUB_${k.name}` : `AI_KEY_${k.name}`);
     return this.keys().map((k) => {
       const s = this.stats(k.name);
       let host = '';
@@ -222,8 +282,32 @@ export class KeyRing {
         lastError: s.lastError || '',
         available: this.available(k),
         hint: sub ? 'subscription' : k.apiKey ? `…${k.apiKey.slice(-4)}` : '(none)',
+        // What the .env itself says (no defaults filled in), so the Edit form can prefill
+        config: {
+          limit: v[`${prefix(k)}_LIMIT`] ?? '',
+          baseUrl: k.type === 'key' ? v[`${prefix(k)}_BASE_URL`] ?? '' : '',
+          model: v[`${prefix(k)}_MODEL`] ?? '',
+        },
+        editable: k.name !== 'LOCAL' && k.name !== 'DEFAULT',
       };
     });
+  }
+
+  /** Where the key file is and whether it is somewhere risky. Never includes contents. */
+  fileInfo() {
+    const home = homeEnvPath();
+    return {
+      path: this.path,
+      exists: existsSync(this.path),
+      location: this.env.GRIDS_ENV_FILE ? 'custom' : this.path === home ? 'home' : 'repo',
+      synced: inSyncedFolder(this.path, this.env),
+      homePath: home,
+    };
+  }
+
+  /** Re-apply owner-only permissions to an existing key file (called at startup). */
+  secure() {
+    return existsSync(this.path) ? secureFile(this.path) : false;
   }
 
   // ---------- editing the .env (local use only; the server gates this) ----------
@@ -235,80 +319,162 @@ export class KeyRing {
     } catch {}
     if (lines.at(-1) === '') lines.pop();
     lines = mutate(lines);
-    const tmp = `${this.path}.tmp`;
+    if (!lines.some((l) => l.trim())) lines.unshift(HEADER);
+    mkdirSync(dirname(this.path), { recursive: true });
+    // A stale temp file would keep its old permissions (mode only applies on create)
+    const tmp = `${this.path}.${process.pid}.tmp`;
+    try {
+      unlinkSync(tmp);
+    } catch {}
     writeFileSync(tmp, lines.join('\n') + '\n', { mode: 0o600 });
     renameSync(tmp, this.path);
-    try {
-      chmodSync(this.path, 0o600);
-    } catch {}
+    secureFile(this.path);
   }
 
   static #clean(v, max) {
     const s = String(v ?? '').trim();
-    if (/[\r\n"]/.test(s)) throw Object.assign(new Error('Values cannot contain newlines or quotes.'), { status: 400 });
+    if (/[\r\n"]/.test(s)) throw err(400, 'Values cannot contain newlines or quotes.');
     return s.slice(0, max);
   }
 
-  addKey({ name, apiKey, limit, baseUrl, model }) {
-    name = String(name ?? '').trim().toUpperCase();
-    if (!validName(name) || name === 'DEFAULT' || name === 'LOCAL') {
-      throw Object.assign(new Error('Name must be 1–32 of A–Z, 0–9, _ (and not end in _LIMIT/_MODEL/_BASE_URL).'), { status: 400 });
+  static #name(name) {
+    const n = String(name ?? '').trim().toUpperCase();
+    if (!validName(n) || n === 'DEFAULT' || n === 'LOCAL') {
+      throw err(400, 'Name must be 1–32 of A–Z, 0–9, _ (and not end in _LIMIT/_MODEL/_BASE_URL).');
     }
-    const key = KeyRing.#clean(apiKey, 500);
-    if (!key) throw Object.assign(new Error('API key is empty.'), { status: 400 });
+    return n;
+  }
+
+  static #limit(limit) {
+    const s = String(limit ?? '').trim();
+    if (s === '') return null;
+    const n = Math.floor(Number(s));
+    if (!(n > 0) || !Number.isFinite(n)) throw err(400, 'Limit must be a positive whole number.');
+    return n;
+  }
+
+  static #url(baseUrl) {
     const url = KeyRing.#clean(baseUrl, 300);
-    if (url) {
-      let u;
-      try {
-        u = new URL(url);
-      } catch {
-        throw Object.assign(new Error('Base URL is not a valid URL.'), { status: 400 });
-      }
-      if (u.protocol !== 'https:' && !(u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname))) {
-        throw Object.assign(new Error('Base URL must be https (or http on localhost).'), { status: 400 });
-      }
+    if (!url) return '';
+    let u;
+    try {
+      u = new URL(url);
+    } catch {
+      throw err(400, 'Base URL is not a valid URL.');
     }
-    const lim = limit === '' || limit == null ? null : Math.floor(Number(limit));
-    if (lim != null && !(lim > 0)) throw Object.assign(new Error('Limit must be a positive whole number.'), { status: 400 });
-    const mdl = KeyRing.#clean(model, 200);
+    if (u.protocol !== 'https:' && !(u.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname))) {
+      throw err(400, 'Base URL must be https (or http on localhost).');
+    }
+    return url;
+  }
+
+  /** The .env entry for a name: 'key', 'sub', or null. */
+  #existing(name) {
+    const v = this.vars();
+    if (v[`AI_KEY_${name}`]) return 'key';
+    if (v[`AI_SUB_${name}`]) return 'sub';
+    return null;
+  }
+
+  #writeKey(name, key, lim, url, mdl) {
     this.#rewrite((lines) => {
       const kept = KeyRing.#without(lines, name);
-      if (!existsSync(this.path) || !kept.some((l) => l.trim())) kept.unshift('# Grids AI keys — local only, never commit this file. See shared/KEYS.md.');
       kept.push(`AI_KEY_${name}="${key}"`);
       if (lim != null) kept.push(`AI_KEY_${name}_LIMIT=${lim}`);
       if (url) kept.push(`AI_KEY_${name}_BASE_URL=${url}`);
       if (mdl) kept.push(`AI_KEY_${name}_MODEL=${mdl}`);
       return kept;
     });
-    return name;
   }
 
-  /** Subscriptions: only the CLI type, a name, limit and model. The CLI path stays hand-edited. */
-  addSubscription({ name, kind, limit, model }) {
-    name = String(name ?? '').trim().toUpperCase();
-    if (!validName(name) || name === 'DEFAULT' || name === 'LOCAL') throw Object.assign(new Error('Name must be 1–32 of A–Z, 0–9, _.'), { status: 400 });
-    if (!KINDS[kind]) throw Object.assign(new Error(`Type must be one of ${Object.keys(KINDS).join(', ')}.`), { status: 400 });
-    const mdl = String(model ?? '').trim();
-    if (!validModel(mdl)) throw Object.assign(new Error('Model may only contain letters, digits and . _ : / -'), { status: 400 });
-    const lim = limit === '' || limit == null ? null : Math.floor(Number(limit));
-    if (lim != null && !(lim > 0)) throw Object.assign(new Error('Limit must be a positive whole number.'), { status: 400 });
+  /** Add a new API key. A name that is already used is refused, so nothing is overwritten by accident. */
+  addKey({ name, apiKey, limit, baseUrl, model }) {
+    const n = KeyRing.#name(name);
+    const key = KeyRing.#clean(apiKey, 500);
+    if (!key) throw err(400, 'API key is empty.');
+    const url = KeyRing.#url(baseUrl);
+    const lim = KeyRing.#limit(limit);
+    const mdl = KeyRing.#clean(model, 200);
+    if (this.#existing(n)) throw err(409, `${n} already exists. Edit it, or pick another name.`);
+    this.#writeKey(n, key, lim, url, mdl);
+    return n;
+  }
+
+  /** Change an API key's settings. An empty apiKey keeps the stored key. */
+  updateKey({ name, apiKey, limit, baseUrl, model }) {
+    const n = KeyRing.#name(name);
+    if (this.#existing(n) !== 'key') throw err(404, `There is no API key called ${n}.`);
+    const typed = KeyRing.#clean(apiKey, 500);
+    const key = typed || this.vars()[`AI_KEY_${n}`];
+    const url = KeyRing.#url(baseUrl);
+    const lim = KeyRing.#limit(limit);
+    const mdl = KeyRing.#clean(model, 200);
+    this.#writeKey(n, key, lim, url, mdl);
+    if (typed) this.#resetCooldown(n); // a new key deserves a fresh try
+    return n;
+  }
+
+  #writeSub(name, kind, lim, mdl, bin) {
     this.#rewrite((lines) => {
       const kept = KeyRing.#without(lines, name);
-      if (!kept.some((l) => l.trim())) kept.unshift('# Grids AI keys — local only, never commit this file. See shared/KEYS.md.');
       kept.push(`AI_SUB_${name}=${kind}`);
       if (lim != null) kept.push(`AI_SUB_${name}_LIMIT=${lim}`);
       if (mdl) kept.push(`AI_SUB_${name}_MODEL=${mdl}`);
+      if (bin) kept.push(`AI_SUB_${name}_BIN=${bin}`);
       return kept;
     });
-    return name;
+  }
+
+  static #subArgs(kind, model) {
+    if (!KINDS[kind]) throw err(400, `Type must be one of ${Object.keys(KINDS).join(', ')}.`);
+    const mdl = String(model ?? '').trim();
+    if (!validModel(mdl)) throw err(400, 'Model may only contain letters, digits and . _ : / -');
+    return mdl;
+  }
+
+  /** Subscriptions: only the CLI type, a name, limit and model. The CLI path (_BIN) stays hand-edited. */
+  addSubscription({ name, kind, limit, model }) {
+    const n = KeyRing.#name(name);
+    const mdl = KeyRing.#subArgs(kind, model);
+    const lim = KeyRing.#limit(limit);
+    if (this.#existing(n)) throw err(409, `${n} already exists. Edit it, or pick another name.`);
+    this.#writeSub(n, kind, lim, mdl, '');
+    return n;
+  }
+
+  /** Change a subscription's type, limit or model. A hand-set _BIN line is kept. */
+  updateSubscription({ name, kind, limit, model }) {
+    const n = KeyRing.#name(name);
+    if (this.#existing(n) !== 'sub') throw err(404, `There is no subscription called ${n}.`);
+    const v = this.vars();
+    const k = kind || String(v[`AI_SUB_${n}`]).toLowerCase();
+    const mdl = KeyRing.#subArgs(k, model);
+    const lim = KeyRing.#limit(limit);
+    this.#writeSub(n, k, lim, mdl, KeyRing.#clean(v[`AI_SUB_${n}_BIN`], 500));
+    return n;
+  }
+
+  #resetCooldown(name) {
+    const s = this.usage.keys[name];
+    if (s) {
+      s.cooldownUntil = 0;
+      s.lastError = '';
+      this.#save();
+    }
   }
 
   removeKey(name) {
     if (name === 'DEFAULT') {
       this.#rewrite((lines) => lines.filter((l) => !/^\s*(?:export\s+)?AI_API_KEY\s*=/.test(l)));
     } else {
-      if (!validName(name)) throw Object.assign(new Error('Bad key name.'), { status: 400 });
-      this.#rewrite((lines) => KeyRing.#without(lines, name));
+      if (!validName(name)) throw err(400, 'Bad key name.');
+      if (!this.#existing(name)) throw err(404, `There is nothing called ${name}.`);
+      const selected = this.vars().AI_KEY_SELECT === name;
+      this.#rewrite((lines) => {
+        const kept = KeyRing.#without(lines, name);
+        // A default that points at nothing would silently fall back; say so explicitly
+        return selected ? [...kept.filter((l) => !/^\s*(?:export\s+)?AI_KEY_SELECT\s*=/.test(l)), 'AI_KEY_SELECT=auto'] : kept;
+      });
     }
     delete this.usage.keys[name];
     this.#save();

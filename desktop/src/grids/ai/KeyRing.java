@@ -7,11 +7,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.AclEntry;
+import java.nio.file.attribute.AclEntryPermission;
+import java.nio.file.attribute.AclEntryType;
+import java.nio.file.attribute.AclFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumSet;
+import java.util.Locale;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,7 +43,17 @@ public final class KeyRing {
     private static final Pattern LINE_RE = Pattern.compile("^(?:export\\s+)?([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(.*)$");
     private static final long RATE_LIMIT_COOLDOWN_MS = 60_000;
     private static final long AUTH_COOLDOWN_MS = 60 * 60_000;
-    private static final String HEADER = "# Grids AI keys — local only, never commit this file. See shared/KEYS.md.";
+    private static final String HEADER = "# Grids AI keys — local only, never commit or share this file. See shared/KEYS.md.";
+    private static final List<String> SYNC_DIRS = List.of("onedrive", "dropbox", "google drive", "googledrive", "icloud drive", "iclouddrive",
+            "mobile documents", "box sync", "pcloud");
+    // Key-shaped strings providers sometimes echo back in error messages (same list as keyring.js)
+    private static final List<Pattern> KEY_PATTERNS = List.of(
+            Pattern.compile("\\b(?:sk|gsk|xai|pk|rk)[-_][A-Za-z0-9_-]{8,}"),
+            Pattern.compile("\\bAIza[0-9A-Za-z_-]{20,}"),
+            Pattern.compile("(?i)\\bBearer\\s+[A-Za-z0-9._~+/-]{8,}=*"));
+
+    /** Where the key file is and whether it is somewhere risky. Never includes contents. */
+    public record FileInfo(Path path, boolean exists, String location, boolean synced, Path homePath) {}
 
     /** One connection. type is "key" (apiKey/baseUrl set) or "sub" (kind/bin set). limit null = none. */
     public record Conn(String name, String type, String apiKey, String baseUrl, String model, String kind, String bin, Integer limit) {
@@ -47,7 +64,8 @@ public final class KeyRing {
 
     /** What the UI shows. Never contains the key itself. */
     public record View(String name, String type, String label, Boolean installed, String model, int limit, long requests, long tokens,
-                       long rateLimited, long coolingFor, String lastError, boolean available, String hint) {}
+                       long rateLimited, long coolingFor, String lastError, boolean available, String hint,
+                       String kind, String configLimit, String configBaseUrl, String configModel, boolean editable) {}
 
     /** Bad input or an unusable choice; status mirrors the web API's HTTP status. */
     public static final class KeyException extends RuntimeException {
@@ -95,12 +113,79 @@ public final class KeyRing {
         } catch (Exception e) {
             // no code source (unusual class loader): the working dir is enough
         }
+        Path repo = null;
         for (Path start : starts) {
-            for (Path p = start; p != null; p = p.getParent()) {
-                if (Files.isRegularFile(p.resolve("shared").resolve("FORMAT.md"))) return p.resolve(".env");
+            for (Path p = start; p != null && repo == null; p = p.getParent()) {
+                if (Files.isRegularFile(p.resolve("shared").resolve("FORMAT.md"))) repo = p.resolve(".env");
             }
         }
+        // Same order as keyring.js: an existing repo .env, else an existing ~/.grids/.env,
+        // else the repo .env (created on first save), else ~/.grids/.env
+        Path home = homeEnvPath();
+        if (repo != null && Files.isRegularFile(repo)) return repo;
+        if (Files.isRegularFile(home)) return home;
+        return repo != null ? repo : home;
+    }
+
+    public static Path homeEnvPath() {
         return Path.of(System.getProperty("user.home"), ".grids", ".env");
+    }
+
+    /** True when the path is inside a cloud-synced folder, where keys would be uploaded. */
+    public static boolean inSyncedFolder(String path, Map<String, String> env) {
+        String p = path.toLowerCase(Locale.ROOT);
+        for (String var : List.of("OneDrive", "OneDriveConsumer", "OneDriveCommercial")) {
+            String r = env.get(var);
+            if (r == null || r.isBlank()) continue;
+            r = r.toLowerCase(Locale.ROOT);
+            if (!r.endsWith("\\") && !r.endsWith("/")) r += java.io.File.separator;
+            if (p.startsWith(r)) return true;
+        }
+        for (String seg : p.split("[\\\\/]")) {
+            for (String d : SYNC_DIRS) if (seg.equals(d) || seg.startsWith(d + " -") || seg.startsWith(d + "-")) return true;
+        }
+        return false;
+    }
+
+    /** Remove the given secrets and anything key-shaped from text that will be stored or shown. */
+    public static String redact(String text, List<String> secrets) {
+        String s = text == null ? "" : text;
+        for (String k : secrets) if (k != null && k.length() >= 6) s = s.replace(k, "[redacted]");
+        for (Pattern re : KEY_PATTERNS) s = re.matcher(s).replaceAll("[redacted]");
+        return s;
+    }
+
+    /**
+     * Make a file readable by its owner only: mode 600 on POSIX; on Windows an ACL with one
+     * entry for the owner and no inherited entries (chmod means nothing there).
+     */
+    public static boolean secureFile(Path p) {
+        try {
+            if (Files.getFileAttributeView(p, PosixFileAttributeView.class) != null) {
+                Files.setPosixFilePermissions(p, PosixFilePermissions.fromString("rw-------"));
+                return true;
+            }
+            AclFileAttributeView acl = Files.getFileAttributeView(p, AclFileAttributeView.class);
+            if (acl == null) return false;
+            AclEntry owner = AclEntry.newBuilder().setType(AclEntryType.ALLOW).setPrincipal(acl.getOwner())
+                    .setPermissions(EnumSet.allOf(AclEntryPermission.class)).build();
+            acl.setAcl(List.of(owner));
+            return true;
+        } catch (IOException | RuntimeException e) {
+            return false;
+        }
+    }
+
+    public FileInfo fileInfo() {
+        Path home = homeEnvPath();
+        String explicit = env.get("GRIDS_ENV_FILE");
+        String location = explicit != null && !explicit.isBlank() ? "custom" : path.toAbsolutePath().equals(home.toAbsolutePath()) ? "home" : "repo";
+        return new FileInfo(path, Files.isRegularFile(path), location, inSyncedFolder(path.toAbsolutePath().toString(), env), home);
+    }
+
+    /** Re-apply owner-only permissions to an existing key file (called at startup). */
+    public boolean secure() {
+        return Files.isRegularFile(path) && secureFile(path);
     }
 
     /** Minimal .env parser: KEY=VALUE, `export `, quotes, # comments. Same rules as parseEnv in keyring.js. */
@@ -302,7 +387,7 @@ public final class KeyRing {
         s.put("lastUsed", Instant.ofEpochMilli(now.getAsLong()).toString());
         if (ok) s.put("lastError", "");
         else {
-            String err = error == null ? "" : error;
+            String err = redact(error, keys().stream().map(Conn::apiKey).toList());
             s.put("lastError", err.length() > 200 ? err.substring(0, 200) : err);
             if (status == 429) {
                 s.put("rateLimited", num(s, "rateLimited") + 1);
@@ -316,7 +401,9 @@ public final class KeyRing {
 
     public List<View> summary() {
         List<View> out = new ArrayList<>();
+        Map<String, String> v = vars();
         for (Conn k : keys()) {
+            String prefix = (k.isSub() ? "AI_SUB_" : "AI_KEY_") + k.name();
             Map<String, Object> s = stats(k.name());
             Subscriptions.Kind sub = k.isSub() ? Subscriptions.KINDS.get(k.kind()) : null;
             String host = "";
@@ -334,7 +421,10 @@ public final class KeyRing {
                     !k.model().isEmpty() ? k.model() : sub != null ? "(CLI default)" : "",
                     k.limit() == null ? 0 : k.limit(), num(s, "requests"), num(s, "tokens"), num(s, "rateLimited"),
                     Math.max(0, (long) Math.ceil((num(s, "cooldownUntil") - now.getAsLong()) / 1000.0)),
-                    s != null && s.get("lastError") instanceof String le ? le : "", available(k), hint));
+                    s != null && s.get("lastError") instanceof String le ? le : "", available(k), hint,
+                    k.kind() == null ? "" : k.kind(), v.getOrDefault(prefix + "_LIMIT", ""),
+                    k.isSub() ? "" : v.getOrDefault(prefix + "_BASE_URL", ""), v.getOrDefault(prefix + "_MODEL", ""),
+                    !"LOCAL".equals(k.name()) && !"DEFAULT".equals(k.name())));
         }
         return out;
     }
@@ -356,7 +446,9 @@ public final class KeyRing {
         lines = m.apply(lines);
         try {
             Files.createDirectories(path.toAbsolutePath().getParent());
-            Path tmp = path.resolveSibling(path.getFileName() + ".tmp");
+            if (lines.stream().allMatch(String::isBlank)) lines.add(0, HEADER);
+            Path tmp = path.resolveSibling(path.getFileName() + "." + ProcessHandle.current().pid() + ".tmp");
+            Files.deleteIfExists(tmp); // a stale temp file would keep its old permissions
             Files.writeString(tmp, String.join("\n", lines) + "\n", StandardCharsets.UTF_8);
             try {
                 Files.setPosixFilePermissions(tmp, PosixFilePermissions.fromString("rw-------"));
@@ -364,6 +456,7 @@ public final class KeyRing {
                 // Windows: the file inherits the user-profile ACL
             }
             Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            secureFile(path); // Windows: the moved file carries the folder's inherited ACL
         } catch (IOException e) {
             throw new KeyException(500, "Could not write " + path + ": " + e.getMessage());
         }
@@ -394,15 +487,57 @@ public final class KeyRing {
         return n;
     }
 
-    private static List<String> withHeader(List<String> kept) {
-        if (kept.stream().allMatch(String::isBlank)) kept.add(0, HEADER);
-        return kept;
+    /** "key", "sub", or null for a name not in the .env. */
+    private String existing(String name) {
+        Map<String, String> v = vars();
+        if (!v.getOrDefault("AI_KEY_" + name, "").isEmpty()) return "key";
+        if (!v.getOrDefault("AI_SUB_" + name, "").isEmpty()) return "sub";
+        return null;
     }
 
+    /** Add a new API key. A name that is already used is refused, so nothing is overwritten by accident. */
     public String addKey(String name, String apiKey, String limit, String baseUrl, String model) {
         String n = newName(name);
         String key = clean(apiKey, 500);
         if (key.isEmpty()) throw new KeyException(400, "API key is empty.");
+        String url = checkUrl(baseUrl);
+        Integer lim = parseLimit(limit);
+        String mdl = clean(model, 200);
+        if (existing(n) != null) throw new KeyException(409, n + " already exists. Edit it, or pick another name.");
+        writeKey(n, key, lim, url, mdl);
+        return n;
+    }
+
+    /** Change an API key's settings. An empty apiKey keeps the stored key. */
+    public String updateKey(String name, String apiKey, String limit, String baseUrl, String model) {
+        String n = newName(name);
+        if (!"key".equals(existing(n))) throw new KeyException(404, "There is no API key called " + n + ".");
+        String typed = clean(apiKey, 500);
+        String key = typed.isEmpty() ? vars().get("AI_KEY_" + n) : typed;
+        String url = checkUrl(baseUrl);
+        Integer lim = parseLimit(limit);
+        String mdl = clean(model, 200);
+        writeKey(n, key, lim, url, mdl);
+        if (!typed.isEmpty() && usage.get(n) != null) { // a new key deserves a fresh try
+            usage.get(n).put("cooldownUntil", 0);
+            usage.get(n).put("lastError", "");
+            save();
+        }
+        return n;
+    }
+
+    private void writeKey(String n, String key, Integer lim, String url, String mdl) {
+        rewrite(lines -> {
+            List<String> kept = without(lines, n);
+            kept.add("AI_KEY_" + n + "=\"" + key + "\"");
+            if (lim != null) kept.add("AI_KEY_" + n + "_LIMIT=" + lim);
+            if (!url.isEmpty()) kept.add("AI_KEY_" + n + "_BASE_URL=" + url);
+            if (!mdl.isEmpty()) kept.add("AI_KEY_" + n + "_MODEL=" + mdl);
+            return kept;
+        });
+    }
+
+    private static String checkUrl(String baseUrl) {
         String url = clean(baseUrl, 300);
         if (!url.isEmpty()) {
             URI u;
@@ -414,33 +549,46 @@ public final class KeyRing {
             boolean https = "https".equals(u.getScheme()) && u.getHost() != null;
             if (!https && !("http".equals(u.getScheme()) && isLocalUrl(url))) throw new KeyException(400, "Base URL must be https (or http on localhost).");
         }
-        Integer lim = parseLimit(limit);
-        String mdl = clean(model, 200);
+        return url;
+    }
+
+    private static String subModel(String kind, String model) {
+        if (kind == null || !Subscriptions.KINDS.containsKey(kind)) throw new KeyException(400, "Type must be one of " + String.join(", ", Subscriptions.KINDS.keySet()) + ".");
+        String mdl = model == null ? "" : model.strip();
+        if (!Subscriptions.validModel(mdl)) throw new KeyException(400, "Model may only contain letters, digits and . _ : / -");
+        return mdl;
+    }
+
+    private void writeSub(String n, String kind, Integer lim, String mdl, String bin) {
         rewrite(lines -> {
-            List<String> kept = withHeader(without(lines, n));
-            kept.add("AI_KEY_" + n + "=\"" + key + "\"");
-            if (lim != null) kept.add("AI_KEY_" + n + "_LIMIT=" + lim);
-            if (!url.isEmpty()) kept.add("AI_KEY_" + n + "_BASE_URL=" + url);
-            if (!mdl.isEmpty()) kept.add("AI_KEY_" + n + "_MODEL=" + mdl);
+            List<String> kept = without(lines, n);
+            kept.add("AI_SUB_" + n + "=" + kind);
+            if (lim != null) kept.add("AI_SUB_" + n + "_LIMIT=" + lim);
+            if (!mdl.isEmpty()) kept.add("AI_SUB_" + n + "_MODEL=" + mdl);
+            if (!bin.isEmpty()) kept.add("AI_SUB_" + n + "_BIN=" + bin);
             return kept;
         });
-        return n;
     }
 
     /** Subscriptions: the CLI type, a name, limit and model. The CLI path (_BIN) stays hand-edited. */
     public String addSubscription(String name, String kind, String limit, String model) {
         String n = newName(name);
-        if (kind == null || !Subscriptions.KINDS.containsKey(kind)) throw new KeyException(400, "Type must be one of " + String.join(", ", Subscriptions.KINDS.keySet()) + ".");
-        String mdl = model == null ? "" : model.strip();
-        if (!Subscriptions.validModel(mdl)) throw new KeyException(400, "Model may only contain letters, digits and . _ : / -");
+        String mdl = subModel(kind, model);
         Integer lim = parseLimit(limit);
-        rewrite(lines -> {
-            List<String> kept = withHeader(without(lines, n));
-            kept.add("AI_SUB_" + n + "=" + kind);
-            if (lim != null) kept.add("AI_SUB_" + n + "_LIMIT=" + lim);
-            if (!mdl.isEmpty()) kept.add("AI_SUB_" + n + "_MODEL=" + mdl);
-            return kept;
-        });
+        if (existing(n) != null) throw new KeyException(409, n + " already exists. Edit it, or pick another name.");
+        writeSub(n, kind, lim, mdl, "");
+        return n;
+    }
+
+    /** Change a subscription's type, limit or model. A hand-set _BIN line is kept. */
+    public String updateSubscription(String name, String kind, String limit, String model) {
+        String n = newName(name);
+        if (!"sub".equals(existing(n))) throw new KeyException(404, "There is no subscription called " + n + ".");
+        Map<String, String> v = vars();
+        String k = kind == null || kind.isBlank() ? v.get("AI_SUB_" + n).toLowerCase(Locale.ROOT) : kind;
+        String mdl = subModel(k, model);
+        Integer lim = parseLimit(limit);
+        writeSub(n, k, lim, mdl, clean(v.getOrDefault("AI_SUB_" + n + "_BIN", ""), 500));
         return n;
     }
 
@@ -450,7 +598,17 @@ public final class KeyRing {
             rewrite(lines -> new ArrayList<>(lines.stream().filter(l -> !legacy.matcher(l).matches()).toList()));
         } else {
             if (!validName(name)) throw new KeyException(400, "Bad key name.");
-            rewrite(lines -> without(lines, name));
+            if (existing(name) == null) throw new KeyException(404, "There is nothing called " + name + ".");
+            boolean selected = name.equals(vars().get("AI_KEY_SELECT"));
+            Pattern sel = Pattern.compile("^\\s*(?:export\\s+)?AI_KEY_SELECT\\s*=.*");
+            rewrite(lines -> {
+                List<String> kept = without(lines, name);
+                if (!selected) return kept;
+                // A default that points at nothing would silently fall back; say so explicitly
+                List<String> out = new ArrayList<>(kept.stream().filter(l -> !sel.matcher(l).matches()).toList());
+                out.add("AI_KEY_SELECT=auto");
+                return out;
+            });
         }
         usage.remove(name);
         save();

@@ -3,6 +3,8 @@
 A spreadsheet with an AI built in. Bring your own key or subscription, and type Python
 into cells next to normal formulas.
 
+![Grids web app: a monthly budget with formulas, a Python cell selected in the formula bar, and the AI panel](docs/screenshots/web-main.png)
+
 - **Formulas**: `=SUM(B2:B9)`, `IF`, `IFERROR`, `ROUND`, text functions, and `SORT` /
   `SEQUENCE` / `TRANSPOSE` with spilling arrays. That's 26 functions so far; there is no
   `VLOOKUP`, `SUMIF` or dates yet, so use a Python cell for those. The full list is in
@@ -39,6 +41,44 @@ cd web && npm start
 # desktop (Windows: .\build.ps1 -Run)
 cd desktop && ./build.sh --run
 ```
+
+To try it with data, open [examples/budget.grid](examples/budget.grid) (**Open** in either
+app, or `java -jar grids.jar examples/budget.grid`). It mixes plain values, formulas, a
+spilled `SORT` and one Python cell.
+
+## Tour
+
+### Ask the AI, then Apply or Discard
+
+The AI proposes a list of cell edits and formats. Nothing changes until you click
+**Apply**, and then it is a single undo step.
+
+| Proposal | Applied |
+|---|---|
+| ![AI panel showing proposed changes with Apply and Discard buttons](docs/screenshots/web-ai-proposal.png) | ![The new "vs average" column filled in after Apply](docs/screenshots/web-ai-applied.png) |
+
+### Keys and subscriptions
+
+Open the AI panel and click **⚙** (web) or **Keys** (desktop). Each connection shows
+its type, model, the last 4 characters of the key and today's usage. **Edit** keeps the
+stored key unless you type a new one, and **Remove** asks first.
+
+| Connections | Editing a key |
+|---|---|
+| ![Settings dialog listing two API keys and a Claude subscription](docs/screenshots/web-keys.png) | ![Edit form for the GROQ key with the key field left blank to keep it](docs/screenshots/web-keys-edit.png) |
+
+### Desktop app
+
+The same workbook in the Swing app. A file you open keeps Python off until you click
+*Enable Python*, because desktop Python runs with full access to your computer.
+
+| Opened (Python off) | After *Enable Python* |
+|---|---|
+| ![Desktop app with the Enable Python banner and F4 waiting](docs/screenshots/desktop-trust.png) | ![Desktop app with the Python cell computed](docs/screenshots/desktop-main.png) |
+
+The web app follows your system's light or dark theme:
+
+![Grids web app in light mode](docs/screenshots/web-main-light.png)
 
 ## Set up
 

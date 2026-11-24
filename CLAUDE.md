@@ -17,6 +17,8 @@ deps; it is becoming the main product, a hosted website) and `desktop/` (Java Sw
   It reuses `shared/ai/tools.json` and `web/public/js/actions.js`.
 - `web/setup.mjs`: `npm run setup` and `npm run uninstall`. The root `uninstall.cmd` /
   `uninstall.sh` wrap the uninstall and then offer to delete the repo folder.
+- `examples/budget.grid` is the demo workbook. `docs/screenshots/` holds the README images;
+  retake them with a fake key file (see its README), never real keys or personal paths.
 - `web/lib/` holds the server-side modules: `ai.js`, `keyring.js`, `subscriptions.js` and
   `local-guard.js`. `web/public/` is the client; its formula engine is `public/engine/`.
 - In `desktop/src/grids/`:

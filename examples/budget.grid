@@ -1,0 +1,143 @@
+{
+  "format": "grids",
+  "version": 1,
+  "title": "Monthly budget",
+  "sheets": [
+    {
+      "name": "Sheet1",
+      "cells": {
+        "A1": "Category",
+        "B1": "Amount",
+        "C1": "Share",
+        "E1": "Summary",
+        "A2": "Rent",
+        "B2": "1200",
+        "C2": "=B2/B$10",
+        "A3": "Groceries",
+        "B3": "420",
+        "C3": "=B3/B$10",
+        "A4": "Transport",
+        "B4": "95",
+        "C4": "=B4/B$10",
+        "A5": "Utilities",
+        "B5": "160",
+        "C5": "=B5/B$10",
+        "A6": "Phone",
+        "B6": "35",
+        "C6": "=B6/B$10",
+        "A7": "Fun",
+        "B7": "180",
+        "C7": "=B7/B$10",
+        "A8": "Savings",
+        "B8": "400",
+        "C8": "=B8/B$10",
+        "A10": "Total",
+        "B10": "=SUM(B2:B8)",
+        "C10": "=SUM(C2:C8)",
+        "E2": "Biggest",
+        "F2": "=MAX(B2:B8)",
+        "E3": "Average",
+        "F3": "=ROUND(AVERAGE(B2:B8), 2)",
+        "E4": "Over $150",
+        "F4": "=py sum(1 for v in vals('B2:B8') if v > 150)",
+        "E6": "Sorted",
+        "F6": "=SORT(B2:B8, 1, FALSE)"
+      },
+      "formats": {
+        "A1": {
+          "bold": true,
+          "bg": "#e8f0fe"
+        },
+        "B1": {
+          "bold": true,
+          "bg": "#e8f0fe"
+        },
+        "C1": {
+          "bold": true,
+          "bg": "#e8f0fe"
+        },
+        "D1": {
+          "bold": true,
+          "bg": "#e8f0fe"
+        },
+        "E1": {
+          "bold": true,
+          "bg": "#e8f0fe"
+        },
+        "F1": {
+          "bold": true,
+          "bg": "#e8f0fe"
+        },
+        "A10": {
+          "bold": true
+        },
+        "B10": {
+          "bold": true,
+          "numFmt": "$#,##0.00"
+        },
+        "C10": {
+          "bold": true,
+          "numFmt": "0.00%"
+        },
+        "B2": {
+          "numFmt": "$#,##0.00"
+        },
+        "B3": {
+          "numFmt": "$#,##0.00"
+        },
+        "B4": {
+          "numFmt": "$#,##0.00"
+        },
+        "B5": {
+          "numFmt": "$#,##0.00"
+        },
+        "B6": {
+          "numFmt": "$#,##0.00"
+        },
+        "B7": {
+          "numFmt": "$#,##0.00"
+        },
+        "B8": {
+          "numFmt": "$#,##0.00"
+        },
+        "B9": {
+          "numFmt": "$#,##0.00"
+        },
+        "F2": {
+          "numFmt": "$#,##0.00"
+        },
+        "F3": {
+          "numFmt": "$#,##0.00"
+        },
+        "C2": {
+          "numFmt": "0.00%"
+        },
+        "C3": {
+          "numFmt": "0.00%"
+        },
+        "C4": {
+          "numFmt": "0.00%"
+        },
+        "C5": {
+          "numFmt": "0.00%"
+        },
+        "C6": {
+          "numFmt": "0.00%"
+        },
+        "C7": {
+          "numFmt": "0.00%"
+        },
+        "C8": {
+          "numFmt": "0.00%"
+        },
+        "C9": {
+          "numFmt": "0.00%"
+        }
+      },
+      "colWidths": {
+        "A": 120,
+        "E": 110
+      }
+    }
+  ]
+}
